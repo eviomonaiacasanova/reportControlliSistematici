@@ -40,6 +40,7 @@ Non richiede installazioni, server o connessione internet.
 ## Struttura del progetto
 
 ```
+
 /
 ├─ index.html
 ├─ app.js

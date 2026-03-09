@@ -44,12 +44,15 @@ async function generatePdf(isBlank) {
   const operatori = (model.meta.operatori || "").trim();
   const dataInizio = model.meta.dataInizio || "";
   const dataFine = model.meta.dataFine || "";
+  const oreFunzionamento = model.meta.oreFunzionamento ?? "";
+  const noteGenerali = String(model.meta.noteGenerali || "").trim();
 
   // --- HEADER: prima scriviamo SEMPRE testo (così non esce mai vuoto) ---
   doc.setFontSize(14);
   doc.text(`Controlli sistematici - ${centrale} (${anno})`, 14, 16);
 
   doc.setFontSize(10);
+  let headerY = 22;
   doc.text(`Preposto: ${preposto}`, 14, 22);
   if (operatori) {
     doc.text(`Operatori: ${operatori}`, 14, 27);
@@ -64,9 +67,16 @@ async function generatePdf(isBlank) {
     ? `Completamento globale: ${gp.pct}% (${gp.done}/${gp.total}, NA: ${gp.na})`
     : "Completamento globale: 0% (nessun controllo)";
   doc.text(gpText, 14, 36);
+  headerY = 36;
 
+  if (oreFunzionamento !== "") {
+    headerY += 5;
+    doc.text(`Ore funzionamento: ${oreFunzionamento}`, 14, headerY);
+  }
+
+  const separatorY = headerY + 7;
   doc.setDrawColor(200);
-  doc.line(14, 43, 196, 43);
+  doc.line(14, separatorY, 196, separatorY);
 
 
   // --- LOGO ---
@@ -79,8 +89,109 @@ async function generatePdf(isBlank) {
     console.warn("Logo non inserito:", e);
   }
 
-  let y = 49;
+  let y = separatorY + 6;
   const canAutoTable = typeof doc.autoTable === "function";
+
+  if (noteGenerali) {
+    if (y > 270) { doc.addPage(); y = 20; }
+
+    if (canAutoTable) {
+      doc.autoTable({
+        startY: y,
+        head: [["Note generali"]],
+        body: [[noteGenerali]],
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 2, overflow: "linebreak" },
+        headStyles: { fontSize: 9, fillColor: [0, 92, 184], textColor: 255 },
+        columnStyles: {
+          0: { cellWidth: 182 }
+        }
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    } else {
+      doc.setFillColor(0, 92, 184);
+      doc.setTextColor(255);
+      doc.rect(14, y, 182, 6, "F");
+      doc.setFontSize(9);
+      doc.text("Note generali", 16, y + 4);
+      doc.setTextColor(0);
+      y += 8;
+
+      const noteLines = doc.splitTextToSize(noteGenerali, 176);
+      const lineH = 4.5;
+      const boxH = Math.max(8, noteLines.length * lineH + 4);
+      doc.rect(14, y - 2, 182, boxH);
+      for (let i = 0; i < noteLines.length; i++) {
+        doc.text(noteLines[i], 16, y + (i * lineH) + 2);
+      }
+      y += boxH + 4;
+    }
+  }
+
+  if (!isBlank) {
+    const koItems = [];
+    for (const section of sortByOrder(model.sezioni)) {
+      for (const it of sortByOrder(section.items || [])) {
+        if ((it.stato || "todo") !== "ko") continue;
+        koItems.push({
+          sezione: section.titolo || "",
+          controllo: it.testo || "",
+          note: String(it.note || "").trim()
+        });
+      }
+    }
+
+    if (y > 270) { doc.addPage(); y = 20; }
+
+    doc.setFontSize(12);
+    doc.setTextColor(180, 0, 0);
+    doc.text(`Segnalazione Guasti (${koItems.length})`, 14, y);
+    doc.setTextColor(0);
+    y += 4;
+
+    if (canAutoTable) {
+      const koRows = koItems.length
+        ? koItems.map(it => [it.sezione, it.controllo, it.note || "-"])
+        : [["", "Nessuna segnalazione guasti", ""]];
+
+      doc.autoTable({
+        startY: y,
+        head: [["Sezione", "Controllo", "Note"]],
+        body: koRows,
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 2, overflow: "linebreak" },
+        headStyles: { fontSize: 9, fillColor: [180, 0, 0], textColor: 255 },
+        columnStyles: {
+          0: { cellWidth: 42 },
+          1: { cellWidth: 78 },
+          2: { cellWidth: 62 }
+        }
+      });
+
+      y = doc.lastAutoTable.finalY + 8;
+    } else {
+      doc.setFontSize(9);
+      if (!koItems.length) {
+        doc.text("Nessuna segnalazione guasti", 14, y);
+        y += 6;
+      } else {
+        for (const ko of koItems) {
+          const lines = doc.splitTextToSize(
+            `[${ko.sezione}] ${ko.controllo} | Note: ${ko.note || "-"}`,
+            180
+          );
+          for (const line of lines) {
+            if (y > 280) { doc.addPage(); y = 20; }
+            doc.text(line, 14, y);
+            y += 4.5;
+          }
+          y += 1.5;
+        }
+      }
+      y += 2;
+      doc.setFontSize(10);
+    }
+  }
 
   for (const section of sortByOrder(model.sezioni)) {
     const items = sortByOrder(section.items || []);
