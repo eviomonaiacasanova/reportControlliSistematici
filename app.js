@@ -475,6 +475,13 @@ function renderItem(sectionId, itemId) {
   btnEdit.textContent = "✏️";
   btnEdit.addEventListener("click", () => renameItem(sectionId, itemId));
 
+  const btnClone = document.createElement("button");
+  btnClone.className = "icon-btn";
+  btnClone.type = "button";
+  btnClone.title = "Duplica controllo";
+  btnClone.textContent = "⧉";
+  btnClone.addEventListener("click", () => cloneItem(sectionId, itemId));
+
   const btnDel = document.createElement("button");
   btnDel.className = "icon-btn danger";
   btnDel.type = "button";
@@ -483,6 +490,7 @@ function renderItem(sectionId, itemId) {
   btnDel.addEventListener("click", () => deleteItem(sectionId, itemId));
 
   tools.appendChild(btnEdit);
+  tools.appendChild(btnClone);
   tools.appendChild(btnUp);
   tools.appendChild(btnDown);
   tools.appendChild(btnDel);
@@ -706,6 +714,17 @@ function renderSections(openSet = new Set()) {
       renameSection(section.id);
     });
 
+    const sClone = document.createElement("button");
+    sClone.className = "icon-btn";
+    sClone.type = "button";
+    sClone.title = "Duplica sezione";
+    sClone.textContent = "⧉";
+    sClone.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cloneSection(section.id);
+    });
+
     const sUp = document.createElement("button");
     sUp.className = "icon-btn";
     sUp.type = "button";
@@ -742,6 +761,7 @@ function renderSections(openSet = new Set()) {
     });
 
     secTools.appendChild(sEdit);
+    secTools.appendChild(sClone);
     secTools.appendChild(sUp);
     secTools.appendChild(sDown);
     secTools.appendChild(sDel);
@@ -945,6 +965,96 @@ function renameItem(sectionId, itemId) {
   it.timestamp = nowDmy();
   touchAudit();
   rerenderAll();
+}
+
+function normalizeSectionAndItemOrders() {
+  const sectionsSorted = sortByOrder(model.sezioni);
+  let secOrder = 10;
+  for (const section of sectionsSorted) {
+    section.order = secOrder;
+    secOrder += 10;
+
+    const itemsSorted = sortByOrder(section.items || []);
+    let itemOrder = 10;
+    for (const item of itemsSorted) {
+      item.order = itemOrder;
+      itemOrder += 10;
+    }
+  }
+}
+
+function cloneItem(sectionId, itemId) {
+  const original = findItem(sectionId, itemId);
+  if (!original) return;
+  const nuovo = prompt("Duplica controllo:", `${original.testo || ""} (copia)`);
+  if (nuovo === null) return;
+  const testo = nuovo.trim();
+  if (!testo) return;
+
+  const s = findSection(sectionId);
+  if (!s) return;
+
+  const existing = collectAllIds(model);
+  const newId = makeUniqueId("itm", existing);
+  const newItem = {
+    ...original,
+    id: newId,
+    testo,
+    order: original.order ?? 0,
+    photos: Array.isArray(original.photos)
+      ? original.photos.map(p => ({ dataUrl: String(p.dataUrl || ""), name: String(p.name || "foto") }))
+      : [],
+    photoDataUrl: String(original.photoDataUrl || ""),
+    photoName: String(original.photoName || ""),
+    timestamp: nowDmy()
+  };
+
+  s.items = s.items || [];
+  s.items.push(newItem);
+  normalizeSectionAndItemOrders();
+  touchAudit();
+  rerenderAll();
+  openSection(sectionId);
+}
+
+function cloneSection(sectionId) {
+  const original = findSection(sectionId);
+  if (!original) return;
+  const nuovo = prompt("Duplica sezione:", `${original.titolo || ""} (copia)`);
+  if (nuovo === null) return;
+  const titolo = nuovo.trim();
+  if (!titolo) return;
+
+  const existing = collectAllIds(model);
+  const newSectionId = makeUniqueId("sec", existing);
+
+  const clonedItems = (sortByOrder(original.items || [])).map(item => {
+    const itemId = makeUniqueId("itm", existing);
+    return {
+      ...item,
+      id: itemId,
+      order: item.order ?? 0,
+      photos: Array.isArray(item.photos)
+        ? item.photos.map(p => ({ dataUrl: String(p.dataUrl || ""), name: String(p.name || "foto") }))
+        : [],
+      photoDataUrl: String(item.photoDataUrl || ""),
+      photoName: String(item.photoName || ""),
+      timestamp: nowDmy()
+    };
+  });
+
+  const cloneSection = {
+    id: newSectionId,
+    titolo,
+    order: original.order ?? 0,
+    items: clonedItems
+  };
+
+  model.sezioni.push(cloneSection);
+  normalizeSectionAndItemOrders();
+  touchAudit();
+  rerenderAll();
+  openSection(newSectionId);
 }
 
 /* ========================================================================== */

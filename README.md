@@ -18,7 +18,7 @@ Non richiede installazioni, server o connessione internet.
 
 - Tutto **offline**, funziona anche con file su PC locale
 - Un file **HTML + JS**
-- Salvataggio dati in **JSON**
+- Salvataggio di tutti i dati in formato **JSON**
 - Struttura per **sezioni e checklist**
 - Stati chiari per ogni controllo (OK / KO / NA / TODO)
 - Note obbligatorie in caso di KO
@@ -33,7 +33,7 @@ Non richiede installazioni, server o connessione internet.
 
 - Un file JSON = **una centrale + un anno**
 - Il preposto lavora su un file unico
-- Gli operatori compilano sul campo anche su carta, i dati vengono poi integrati nella pagina
+- Gli operatori compilano sul campo anche su carta, i dati vengono poi integrati nella pagina manualmente
 
 ---
 
