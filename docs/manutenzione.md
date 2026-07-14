@@ -12,6 +12,12 @@
 - Sostituire `assets/logo.jpg` (UI)
 - Rigenerare la base64 in `app.js` (PDF)
 
+## Regolare peso e qualità delle foto
+- Modificare `CONFIG` all'inizio di `image-utils.js`
+- `maxWidthPx` e `maxHeightPx` regolano la risoluzione massima
+- `jpegQuality` regola il compromesso tra qualità e peso
+- `pdfMaxWidthMm` e `pdfMaxHeightMm` regolano lo spazio occupato nel PDF
+
 ## Filosofia
 Il codice è pensato per:
 - essere letto

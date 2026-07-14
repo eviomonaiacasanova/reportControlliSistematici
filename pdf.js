@@ -36,7 +36,7 @@ async function generatePdf(isBlank) {
   }
 
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
 
   const centrale = model.meta.centraleNome || "";
   const anno = model.meta.anno || "";
@@ -296,17 +296,31 @@ async function appendItemPhoto(doc, item, y) {
 
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
-    const type = getImageType(p.dataUrl);
-    const dims = await getImageDims(p.dataUrl);
+    let prepared = p;
+
+    try {
+      if (window.ReportImages) {
+        prepared = await window.ReportImages.ensureOptimizedPhoto(p);
+      }
+    } catch (error) {
+      console.warn(`Foto non inserita (${p.name || "foto"}):`, error);
+      continue;
+    }
+
+    const type = getImageType(prepared.dataUrl);
+    const dims = prepared.width && prepared.height
+      ? { w: prepared.width, h: prepared.height }
+      : await getImageDims(prepared.dataUrl);
     if (!dims) continue;
 
-    const maxW = 180;
-    const maxH = 60;
+    const imageConfig = window.ReportImages?.CONFIG;
+    const maxW = imageConfig?.pdfMaxWidthMm || 180;
+    const maxH = imageConfig?.pdfMaxHeightMm || 60;
     const scale = Math.min(maxW / dims.w, maxH / dims.h, 1);
-    const iw = Math.round(dims.w * scale);
-    const ih = Math.round(dims.h * scale);
+    const iw = dims.w * scale;
+    const ih = dims.h * scale;
 
-    if (y + ih + 6 > 280) {
+    if (y + 4 + ih + 6 > 280) {
       doc.addPage();
       y = 20;
     }
@@ -316,8 +330,13 @@ async function appendItemPhoto(doc, item, y) {
     doc.text(label, 14, y);
     y += 4;
 
-    doc.addImage(p.dataUrl, type, 14, y, iw, ih);
-    y += ih + 6;
+    try {
+      doc.addImage(prepared.dataUrl, type, 14, y, iw, ih, undefined, "FAST");
+      y += ih + 6;
+    } catch (error) {
+      console.warn(`Foto non inserita (${p.name || "foto"}):`, error);
+      y += 2;
+    }
   }
 
   return y;
@@ -326,6 +345,7 @@ async function appendItemPhoto(doc, item, y) {
 function getImageType(dataUrl) {
   if (dataUrl.startsWith("data:image/png")) return "PNG";
   if (dataUrl.startsWith("data:image/webp")) return "WEBP";
+  if (dataUrl.startsWith("data:image/bmp") || dataUrl.startsWith("data:image/x-ms-bmp")) return "BMP";
   return "JPEG";
 }
 

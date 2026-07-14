@@ -5,11 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_HTML="$ROOT_DIR/index.html"
 OUT_HTML="$ROOT_DIR/dist/index_single.html"
 
-python3 - <<'PY'
+python3 - "$ROOT_DIR" <<'PY'
 from pathlib import Path
 import re
+import sys
 
-root = Path(__file__).resolve().parent.parent
+root = Path(sys.argv[1]).resolve()
 src = root / "index.html"
 out = root / "dist" / "single.html"
 
@@ -61,6 +62,7 @@ for js in [
     "libs/jspdf.umd.min.js",
     "libs/jspdf-autotable.min.js",
     "assets/logo.inline.js",
+    "image-utils.js",
     "pdf.js",
     "app.js",
 ]:

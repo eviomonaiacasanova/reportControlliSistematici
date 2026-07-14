@@ -91,9 +91,45 @@ function normalizeDateString(value) {
 }
 
 function syncLegacyPhotoFields(it) {
-  const first = Array.isArray(it.photos) ? it.photos.find(p => p && p.dataUrl) : null;
-  it.photoDataUrl = first ? first.dataUrl : "";
-  it.photoName = first ? first.name : "";
+  // I campi legacy duplicavano per intero la prima foto nel JSON.
+  // Vengono ancora letti in normalizeModel, ma non sono piu salvati.
+  it.photoDataUrl = "";
+  it.photoName = "";
+}
+
+function normalizePhotoRecord(photo) {
+  if (window.ReportImages) return window.ReportImages.normalizePhotoRecord(photo);
+  return {
+    dataUrl: String(photo?.dataUrl || ""),
+    name: String(photo?.name || "foto")
+  };
+}
+
+async function optimizeModelPhotos(targetModel) {
+  if (!window.ReportImages) return { optimized: 0, errors: [] };
+
+  let optimized = 0;
+  const errors = [];
+
+  for (const section of targetModel.sezioni || []) {
+    for (const item of section.items || []) {
+      const prepared = [];
+      for (const photo of item.photos || []) {
+        try {
+          const result = await window.ReportImages.ensureOptimizedPhoto(photo);
+          if (result.dataUrl !== photo.dataUrl) optimized++;
+          prepared.push(result);
+        } catch (error) {
+          prepared.push(normalizePhotoRecord(photo));
+          errors.push(`${photo.name || "foto"}: ${error.message}`);
+        }
+      }
+      item.photos = prepared;
+      syncLegacyPhotoFields(item);
+    }
+  }
+
+  return { optimized, errors };
 }
 
 function inputValueToDmy(value) {
@@ -154,6 +190,7 @@ function setSubtitleEmpty() {
 function normalizeModel(m) {
   // Normalizzazione minima per evitare undefined e per garantire funzioni UI (riordino, ecc.)
   m.app = m.app || { schemaVersion: 1 };
+  m.app.schemaVersion = 2;
   m.meta = m.meta || {};
   m.sezioni = Array.isArray(m.sezioni) ? m.sezioni : [];
   m.audit = m.audit || {};
@@ -197,7 +234,7 @@ function normalizeModel(m) {
       it.photos = it.photos
         .filter(p => p && p.dataUrl)
         .slice(0, MAX_PHOTOS)
-        .map(p => ({ dataUrl: String(p.dataUrl || ""), name: String(p.name || "foto") }));
+        .map(normalizePhotoRecord);
       syncLegacyPhotoFields(it);
       if (it.timestamp === undefined) it.timestamp = "";
       if (it.timestamp) it.timestamp = normalizeDateString(it.timestamp);
@@ -542,30 +579,40 @@ function renderItem(sectionId, itemId) {
 
   const photoInput = document.createElement("input");
   photoInput.type = "file";
-  photoInput.accept = "image/*";
+  photoInput.accept = "image/jpeg,image/png,image/webp,image/bmp,.bmp";
   photoInput.className = "item-photo-input";
   photoInput.title = "Allega una foto";
   photoInput.hidden = true;
 
   let targetPhotoIndex = -1;
 
-  photoInput.addEventListener("change", () => {
+  photoInput.addEventListener("change", async () => {
     const file = photoInput.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
+
+    const selectedIndex = targetPhotoIndex;
+    photoInput.value = "";
+    photoInput.disabled = true;
+    addLabel.textContent = "Ottimizzazione in corso...";
+
+    try {
+      if (!window.ReportImages) throw new Error("Modulo immagini non caricato.");
+      const optimizedPhoto = await window.ReportImages.optimizeFile(file);
       const it = findItem(sectionId, itemId);
       const photos = Array.isArray(it.photos) ? [...it.photos] : [];
-      const idx = targetPhotoIndex < 0 ? photos.length : targetPhotoIndex;
-      photos[idx] = { dataUrl: String(reader.result || ""), name: file.name || "foto" };
+      const idx = selectedIndex < 0 ? photos.length : selectedIndex;
+      photos[idx] = optimizedPhoto;
       it.photos = photos.filter(p => p && p.dataUrl).slice(0, MAX_PHOTOS);
       syncLegacyPhotoFields(it);
       touchAudit();
       rerenderAll();
-    };
-    reader.readAsDataURL(file);
-    photoInput.value = "";
-    targetPhotoIndex = -1;
+    } catch (error) {
+      alert(`Impossibile importare l'immagine:\n${error.message}`);
+      photoInput.disabled = false;
+      addLabel.textContent = `Fino a ${MAX_PHOTOS} foto - JPG, PNG, WebP o BMP`;
+    } finally {
+      targetPhotoIndex = -1;
+    }
   });
 
   attachment.appendChild(photoInput);
@@ -615,7 +662,10 @@ function renderItem(sectionId, itemId) {
 
     const label = document.createElement("span");
     label.className = "item-photo-label";
-    label.textContent = `Foto ${i + 1}: ${p.name || "foto"}`;
+    const details = window.ReportImages
+      ? window.ReportImages.describePhoto(p)
+      : (p.name || "foto");
+    label.textContent = `Foto ${i + 1}: ${details}`;
 
     box.appendChild(preview);
     box.appendChild(btnClear);
@@ -643,7 +693,7 @@ function renderItem(sectionId, itemId) {
   addLabel.className = "item-photo-label";
   addLabel.textContent = photos.length >= MAX_PHOTOS
     ? "Limite massimo raggiunto"
-    : `Aggiungi fino a ${MAX_PHOTOS} foto`;
+    : `Fino a ${MAX_PHOTOS} foto - JPG, PNG, WebP o BMP`;
 
   addCard.appendChild(addBox);
   addCard.appendChild(addLabel);
@@ -1002,10 +1052,10 @@ function cloneItem(sectionId, itemId) {
     testo,
     order: original.order ?? 0,
     photos: Array.isArray(original.photos)
-      ? original.photos.map(p => ({ dataUrl: String(p.dataUrl || ""), name: String(p.name || "foto") }))
+      ? original.photos.map(normalizePhotoRecord)
       : [],
-    photoDataUrl: String(original.photoDataUrl || ""),
-    photoName: String(original.photoName || ""),
+    photoDataUrl: "",
+    photoName: "",
     timestamp: nowDmy()
   };
 
@@ -1035,10 +1085,10 @@ function cloneSection(sectionId) {
       id: itemId,
       order: item.order ?? 0,
       photos: Array.isArray(item.photos)
-        ? item.photos.map(p => ({ dataUrl: String(p.dataUrl || ""), name: String(p.name || "foto") }))
+        ? item.photos.map(normalizePhotoRecord)
         : [],
-      photoDataUrl: String(item.photoDataUrl || ""),
-      photoName: String(item.photoName || ""),
+      photoDataUrl: "",
+      photoName: "",
       timestamp: nowDmy()
     };
   });
@@ -1189,7 +1239,7 @@ function exportJson() {
     return;
   }
 
-  model.app.lastSavedWith = "1.0.0";
+  model.app.lastSavedWith = "1.3.0";
   touchAudit();
 
   const suggested = makeSuggestedFileName();
@@ -1226,7 +1276,7 @@ function makeSuggestedFileName() {
 
 function openJsonFile(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
       const err = validateModel(parsed);
@@ -1234,11 +1284,20 @@ function openJsonFile(file) {
         alert(err);
         return;
       }
-      model = normalizeModel(parsed);
+      const normalized = normalizeModel(parsed);
+      const imageResult = await optimizeModelPhotos(normalized);
+      model = normalized;
       openedFileName = file?.name || "";
       enableUi(true);
       bindAfterLoad();
       rerenderAll();
+      if (imageResult.errors.length) {
+        alert(
+          "Alcune immagini non sono state ottimizzate:\n\n" +
+          imageResult.errors.slice(0, 5).join("\n") +
+          (imageResult.errors.length > 5 ? "\n..." : "")
+        );
+      }
     } catch (e) {
       alert("Errore nel parsing JSON: " + e.message);
     }
@@ -1262,7 +1321,7 @@ function createNewFile() {
 
   const existing = new Set();
   const base = {
-    app: { schemaVersion: 1 },
+    app: { schemaVersion: 2 },
     meta: {},
     sezioni: sections.map((titolo, i) => ({
       id: makeUniqueId("sec", existing),

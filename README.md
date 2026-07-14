@@ -22,6 +22,7 @@ Non richiede installazioni, server o connessione internet.
 - Struttura per **sezioni e checklist**
 - Stati chiari per ogni controllo (OK / KO / NA / TODO)
 - Note obbligatorie in caso di KO
+- Foto JPG, PNG, WebP e BMP ottimizzate automaticamente
 - Generazione PDF:
   - modulo vuoto (per stampa e compilazione a mano)
   - stato attuale (per report finale)
@@ -44,6 +45,7 @@ Non richiede installazioni, server o connessione internet.
 /
 ├─ index.html
 ├─ app.js
+├─ image-utils.js
 ├─ pdf.js
 ├─ style.css
 ├─ README.md
@@ -70,6 +72,7 @@ Non richiede installazioni, server o connessione internet.
 │  └─ jspdf.umd.min.js.map
 └─ scripts/
    ├─ build-single-html.sh
+   ├─ build-single-html.ps1
    ├─ inline-favicon.sh
    └─ update-logo-base64dataurl.sh
 ```
