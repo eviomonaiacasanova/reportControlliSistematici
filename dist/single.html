@@ -1365,6 +1365,575 @@ window.LOGO_DATA_URL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEBLAEsAAD/2wBDAAM
   <!-- App -->
   <script>
 /* ========================================================================== */
+/* UTILITA CONDIVISE                                                          */
+/* Date, identificativi e nomi dei file esportati vivono in questo modulo.    */
+/* ========================================================================== */
+
+(function initReportUtils(global) {
+  "use strict";
+
+  // Aggiunge uno zero iniziale ai numeri composti da una sola cifra.
+  function pad2(value) {
+    return String(value).padStart(2, "0");
+  }
+
+  // Converte una data nel formato leggibile GG/MM/AAAA.
+  function formatDateDDMMYYYY(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+    return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`;
+  }
+
+  // Converte una data nel formato compatto AAAAMMGG.
+  function formatDateYYYYMMDD(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+    return `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}`;
+  }
+
+  // Converte una data nel formato AAAAMMGG_HHMM usato negli export.
+  function formatDateTimeYYYYMMDDHHMM(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+    return `${formatDateYYYYMMDD(date)}_${pad2(date.getHours())}${pad2(date.getMinutes())}`;
+  }
+
+  // Converte una data ISO AAAA-MM-GG nel formato GG/MM/AAAA.
+  function formatYmdToDmy(value) {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+  }
+
+  // Converte una data GG/MM/AAAA nel formato ISO AAAA-MM-GG.
+  function formatDmyToYmd(value) {
+    const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return match ? `${match[3]}-${match[2]}-${match[1]}` : "";
+  }
+
+  // Normalizza i formati di data accettati nel formato GG/MM/AAAA.
+  function normalizeDateString(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return "";
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(text)) return text;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return formatYmdToDmy(text);
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? text : formatDateDDMMYYYY(parsed);
+  }
+
+  // Restituisce la data indicata, o quella corrente, nel formato GG/MM/AAAA.
+  function nowDmy(now = new Date()) {
+    return formatDateDDMMYYYY(now);
+  }
+
+  // Genera un identificativo con data, ora e una componente casuale.
+  function makeId(prefix, now = new Date(), random = Math.random) {
+    const stamp = [
+      now.getFullYear(),
+      pad2(now.getMonth() + 1),
+      pad2(now.getDate()),
+      "_",
+      pad2(now.getHours()),
+      pad2(now.getMinutes()),
+      pad2(now.getSeconds())
+    ].join("");
+    const suffix = random().toString(36).slice(2, 7);
+    return `${prefix}_${stamp}_${suffix}`;
+  }
+
+  // Genera e registra un identificativo non ancora presente nell'insieme.
+  function makeUniqueId(prefix, existingIds, idFactory = makeId) {
+    let id = idFactory(prefix);
+    while (existingIds.has(id)) id = idFactory(prefix);
+    existingIds.add(id);
+    return id;
+  }
+
+  // Rende sicuro il nome della centrale per l'uso nel nome di un file.
+  function sanitizeFilePart(value) {
+    return String(value || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "_")
+      .replace(/[^A-Z0-9_]/g, "");
+  }
+
+  // Costruisce un nome export coerente per JSON e PDF.
+  function buildExportFileName({ centrale, anno, label = "", date = new Date(), extension }) {
+    const parts = [sanitizeFilePart(centrale), sanitizeFilePart(anno)];
+    if (label) parts.push(String(label).trim().replace(/[^A-Za-z0-9_]/g, ""));
+    parts.push(formatDateTimeYYYYMMDDHHMM(date));
+    const ext = String(extension || "").replace(/^\./, "");
+    return `${parts.filter(Boolean).join("_")}.${ext}`;
+  }
+
+  global.ReportUtils = Object.freeze({
+    buildExportFileName,
+    formatDateDDMMYYYY,
+    formatDateTimeYYYYMMDDHHMM,
+    formatDateYYYYMMDD,
+    formatDmyToYmd,
+    formatYmdToDmy,
+    makeId,
+    makeUniqueId,
+    normalizeDateString,
+    nowDmy,
+    pad2,
+    sanitizeFilePart
+  });
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+  <script>
+/* ========================================================================== */
+/* MODELLO DATI                                                               */
+/* Trasformazioni pure: ricevono dati, restituiscono nuovi dati e non usano   */
+/* direttamente DOM, prompt, alert o lo stato globale dell'applicazione.       */
+/* ========================================================================== */
+
+(function initReportModel(global) {
+  "use strict";
+
+  const VALID_STATES = new Set(["todo", "ok", "ko", "na"]);
+  const DEFAULT_MAX_PHOTOS = 3;
+  const SCHEMA_VERSION = 2;
+
+  // Restituisce una copia ordinata senza modificare l'array originale.
+  function sortByOrder(values) {
+    return [...(values || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  // Raccoglie tutti gli identificativi presenti nel report.
+  function collectAllIds(report) {
+    const ids = new Set();
+    for (const section of report?.sezioni || []) {
+      if (section.id) ids.add(section.id);
+      for (const item of section.items || []) {
+        if (item.id) ids.add(item.id);
+      }
+    }
+    return ids;
+  }
+
+  // Cerca una sezione senza dipendere dal modello globale dell'interfaccia.
+  function findSection(report, sectionId) {
+    return (report?.sezioni || []).find(section => section.id === sectionId) || null;
+  }
+
+  // Cerca un controllo all'interno di una sezione.
+  function findItem(report, sectionId, itemId) {
+    const section = findSection(report, sectionId);
+    return (section?.items || []).find(item => item.id === itemId) || null;
+  }
+
+  // Crea un nuovo identificativo quando quello ricevuto manca o e duplicato.
+  function claimId(value, prefix, usedIds, makeUniqueId) {
+    const requested = String(value || "").trim();
+    if (requested && !usedIds.has(requested)) {
+      usedIds.add(requested);
+      return requested;
+    }
+
+    let generated = "";
+    let idsBeforeGeneration;
+    do {
+      idsBeforeGeneration = new Set(usedIds);
+      generated = makeUniqueId(prefix, usedIds);
+    } while (!generated || idsBeforeGeneration.has(generated));
+    usedIds.add(generated);
+    return generated;
+  }
+
+  // Uniforma una foto quando non viene fornito un normalizzatore specializzato.
+  function normalizePhotoFallback(photo) {
+    const source = photo && typeof photo === "object" ? photo : {};
+    return {
+      ...source,
+      dataUrl: String(source.dataUrl || ""),
+      name: String(source.name || "foto")
+    };
+  }
+
+  // Normalizza un JSON importato restituendo un nuovo modello indipendente.
+  function normalizeModel(source, options = {}) {
+    const input = source && typeof source === "object" ? source : {};
+    const normalizeDate = options.normalizeDate || global.ReportUtils.normalizeDateString;
+    const normalizePhoto = options.normalizePhoto || normalizePhotoFallback;
+    const maxPhotos = Number(options.maxPhotos) || DEFAULT_MAX_PHOTOS;
+    const makeUniqueId = options.makeUniqueId || global.ReportUtils.makeUniqueId;
+    const usedIds = new Set();
+
+    const meta = { ...(input.meta || {}) };
+    const audit = { ...(input.audit || {}) };
+    if (meta.dataInizio !== undefined) meta.dataInizio = normalizeDate(meta.dataInizio);
+    if (meta.dataFine !== undefined) meta.dataFine = normalizeDate(meta.dataFine);
+    if (audit.lastModified !== undefined) audit.lastModified = normalizeDate(audit.lastModified);
+
+    let sectionOrder = 10;
+    const sections = (Array.isArray(input.sezioni) ? input.sezioni : []).map(rawSection => {
+      const sourceSection = rawSection && typeof rawSection === "object" ? rawSection : {};
+      const sectionId = claimId(sourceSection.id, "sec", usedIds, makeUniqueId);
+      const numericOrder = Number(sourceSection.order);
+      const order = sourceSection.order === undefined || sourceSection.order === null || Number.isNaN(numericOrder)
+        ? sectionOrder
+        : numericOrder;
+      sectionOrder = Math.max(sectionOrder, order) + 10;
+
+      let itemOrder = 10;
+      let needsReorder = false;
+      const itemOrders = [];
+      const items = (Array.isArray(sourceSection.items) ? sourceSection.items : []).map(rawItem => {
+        const sourceItem = rawItem && typeof rawItem === "object" ? rawItem : {};
+        const numericItemOrder = Number(sourceItem.order);
+        const normalizedOrder = sourceItem.order === undefined || sourceItem.order === null || Number.isNaN(numericItemOrder)
+          ? itemOrder
+          : numericItemOrder;
+        if (sourceItem.order === undefined || sourceItem.order === null || Number.isNaN(numericItemOrder)) {
+          needsReorder = true;
+        }
+        itemOrders.push(normalizedOrder);
+        itemOrder = Math.max(itemOrder, normalizedOrder) + 10;
+
+        let photos = Array.isArray(sourceItem.photos) ? sourceItem.photos : [];
+        if (!photos.length && sourceItem.photoDataUrl) {
+          photos = [{ dataUrl: sourceItem.photoDataUrl, name: sourceItem.photoName || "foto" }];
+        }
+
+        return {
+          ...sourceItem,
+          id: claimId(sourceItem.id, "itm", usedIds, makeUniqueId),
+          testo: String(sourceItem.testo ?? ""),
+          order: normalizedOrder,
+          stato: VALID_STATES.has(sourceItem.stato) ? sourceItem.stato : "todo",
+          note: String(sourceItem.note ?? ""),
+          photos: photos
+            .filter(photo => photo && photo.dataUrl)
+            .slice(0, maxPhotos)
+            .map(photo => ({ ...normalizePhoto(photo) })),
+          photoDataUrl: "",
+          photoName: "",
+          timestamp: sourceItem.timestamp ? normalizeDate(sourceItem.timestamp) : ""
+        };
+      });
+
+      if (!needsReorder && new Set(itemOrders).size !== itemOrders.length) needsReorder = true;
+      const orderedItems = needsReorder
+        ? items.map((item, index) => ({ ...item, order: (index + 1) * 10 }))
+        : items;
+
+      return {
+        ...sourceSection,
+        id: sectionId,
+        titolo: String(sourceSection.titolo ?? ""),
+        order,
+        items: orderedItems
+      };
+    });
+
+    return {
+      ...input,
+      app: { ...(input.app || {}), schemaVersion: SCHEMA_VERSION },
+      meta,
+      sezioni: sections,
+      audit
+    };
+  }
+
+  // Verifica che il JSON contenga la struttura minima richiesta.
+  function validateModel(value) {
+    if (!value || typeof value !== "object") return "JSON non valido.";
+    if (!value.meta || !value.sezioni) return "Mancano meta o sezioni.";
+    if (!Array.isArray(value.sezioni)) return "sezioni deve essere un array.";
+    return "";
+  }
+
+  // Aggiorna una sezione applicando una trasformazione pura.
+  function updateSection(report, sectionId, updater) {
+    let changed = false;
+    const sections = (report.sezioni || []).map(section => {
+      if (section.id !== sectionId) return section;
+      changed = true;
+      return updater(section);
+    });
+    return changed ? { ...report, sezioni: sections } : report;
+  }
+
+  // Aggiorna un controllo applicando una trasformazione pura.
+  function updateItem(report, sectionId, itemId, updater) {
+    return updateSection(report, sectionId, section => {
+      let changed = false;
+      const items = (section.items || []).map(item => {
+        if (item.id !== itemId) return item;
+        changed = true;
+        return updater(item);
+      });
+      return changed ? { ...section, items } : section;
+    });
+  }
+
+  // Aggiunge una sezione al report senza modificare quello originale.
+  function addSection(report, section) {
+    return { ...report, sezioni: [...(report.sezioni || []), section] };
+  }
+
+  // Aggiunge un controllo alla sezione richiesta.
+  function addItem(report, sectionId, item) {
+    return updateSection(report, sectionId, section => ({
+      ...section,
+      items: [...(section.items || []), item]
+    }));
+  }
+
+  // Elimina una sezione dal report.
+  function removeSection(report, sectionId) {
+    return { ...report, sezioni: (report.sezioni || []).filter(section => section.id !== sectionId) };
+  }
+
+  // Elimina un controllo dalla sezione richiesta.
+  function removeItem(report, sectionId, itemId) {
+    return updateSection(report, sectionId, section => ({
+      ...section,
+      items: (section.items || []).filter(item => item.id !== itemId)
+    }));
+  }
+
+  // Aggiorna una proprieta dei dati generali.
+  function updateMeta(report, key, value) {
+    return { ...report, meta: { ...(report.meta || {}), [key]: value } };
+  }
+
+  // Aggiorna le informazioni di audit del report.
+  function updateAudit(report, lastModified, lastModifiedBy) {
+    return {
+      ...report,
+      audit: { ...(report.audit || {}), lastModified, lastModifiedBy }
+    };
+  }
+
+  // Imposta lo stato di un singolo controllo.
+  function setItemState(report, sectionId, itemId, state, timestamp) {
+    const normalizedState = VALID_STATES.has(state) ? state : "todo";
+    return updateItem(report, sectionId, itemId, item => ({
+      ...item,
+      stato: normalizedState,
+      timestamp
+    }));
+  }
+
+  // Imposta lo stesso stato su tutti i controlli di una sezione.
+  function setSectionState(report, sectionId, state, timestamp) {
+    const normalizedState = VALID_STATES.has(state) ? state : "todo";
+    return updateSection(report, sectionId, section => ({
+      ...section,
+      items: (section.items || []).map(item => ({
+        ...item,
+        stato: normalizedState,
+        timestamp
+      }))
+    }));
+  }
+
+  // Duplica un controllo mantenendone i dati compilati.
+  function cloneItem(original, { id, testo, timestamp }) {
+    return {
+      ...original,
+      id,
+      testo,
+      photos: (original.photos || []).map(photo => ({ ...photo })),
+      photoDataUrl: "",
+      photoName: "",
+      timestamp
+    };
+  }
+
+  // Duplica una sezione mantenendo i controlli ma azzerando i dati compilati.
+  function cloneSectionEmpty(original, { id, titolo, itemIds }) {
+    const items = sortByOrder(original.items || []).map((item, index) => ({
+      ...item,
+      id: itemIds[index],
+      stato: "todo",
+      note: "",
+      photos: [],
+      photoDataUrl: "",
+      photoName: "",
+      timestamp: ""
+    }));
+    return { ...original, id, titolo, items };
+  }
+
+  // Riassegna valori di order regolari a sezioni e controlli.
+  function normalizeOrders(report) {
+    const sections = sortByOrder(report.sezioni || []).map((section, sectionIndex) => ({
+      ...section,
+      order: (sectionIndex + 1) * 10,
+      items: sortByOrder(section.items || []).map((item, itemIndex) => ({
+        ...item,
+        order: (itemIndex + 1) * 10
+      }))
+    }));
+    return { ...report, sezioni: sections };
+  }
+
+  // Verifica se un controllo puo essere spostato nella direzione richiesta.
+  function canMoveItem(report, sectionId, itemId, direction) {
+    const items = sortByOrder(findSection(report, sectionId)?.items || []);
+    const index = items.findIndex(item => item.id === itemId);
+    return index >= 0 && (direction === "up" ? index > 0 : index < items.length - 1);
+  }
+
+  // Sposta un controllo scambiandone l'ordine con quello adiacente.
+  function moveItem(report, sectionId, itemId, direction) {
+    const section = findSection(report, sectionId);
+    const items = sortByOrder(section?.items || []);
+    const index = items.findIndex(item => item.id === itemId);
+    const swapIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || swapIndex < 0 || swapIndex >= items.length) return report;
+    const current = items[index];
+    const adjacent = items[swapIndex];
+    return updateSection(report, sectionId, value => ({
+      ...value,
+      items: (value.items || []).map(item => {
+        if (item.id === current.id) return { ...item, order: adjacent.order };
+        if (item.id === adjacent.id) return { ...item, order: current.order };
+        return item;
+      })
+    }));
+  }
+
+  // Verifica se una sezione puo essere spostata nella direzione richiesta.
+  function canMoveSection(report, sectionId, direction) {
+    const sections = sortByOrder(report.sezioni || []);
+    const index = sections.findIndex(section => section.id === sectionId);
+    return index >= 0 && (direction === "up" ? index > 0 : index < sections.length - 1);
+  }
+
+  // Sposta una sezione scambiandone l'ordine con quella adiacente.
+  function moveSection(report, sectionId, direction) {
+    const sections = sortByOrder(report.sezioni || []);
+    const index = sections.findIndex(section => section.id === sectionId);
+    const swapIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || swapIndex < 0 || swapIndex >= sections.length) return report;
+    const current = sections[index];
+    const adjacent = sections[swapIndex];
+    return {
+      ...report,
+      sezioni: (report.sezioni || []).map(section => {
+        if (section.id === current.id) return { ...section, order: adjacent.order };
+        if (section.id === adjacent.id) return { ...section, order: current.order };
+        return section;
+      })
+    };
+  }
+
+  // Conta i controlli di una sezione raggruppandoli per stato.
+  function computeSectionBadges(section) {
+    const counts = { todo: 0, ok: 0, ko: 0, na: 0 };
+    for (const item of section?.items || []) {
+      const state = VALID_STATES.has(item.stato) ? item.stato : "todo";
+      counts[state]++;
+    }
+    return counts;
+  }
+
+  // Calcola l'avanzamento di una singola sezione.
+  function computeSectionProgress(section) {
+    const items = section?.items || [];
+    const total = items.length;
+    const done = items.filter(item => (item.stato || "todo") !== "todo").length;
+    return { total, done, pct: total ? Math.round((done / total) * 100) : 0 };
+  }
+
+  // Calcola l'avanzamento complessivo escludendo i non applicabili dal totale.
+  function computeGlobalProgress(report) {
+    const counts = { ok: 0, ko: 0, todo: 0, na: 0 };
+    for (const section of report?.sezioni || []) {
+      for (const item of section.items || []) {
+        const state = VALID_STATES.has(item.stato) ? item.stato : "todo";
+        counts[state]++;
+      }
+    }
+    const total = counts.ok + counts.ko + counts.todo;
+    const done = counts.ok + counts.ko;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    return { ...counts, total, done, pct };
+  }
+
+  // Azzera compilazione, allegati, metadati e audit del report.
+  function resetReport(report) {
+    return {
+      ...report,
+      meta: {
+        ...(report.meta || {}),
+        centraleNome: "",
+        anno: "",
+        preposto: "",
+        operatori: "",
+        dataInizio: "",
+        dataFine: "",
+        oreFunzionamento: "",
+        noteGenerali: ""
+      },
+      sezioni: (report.sezioni || []).map(section => ({
+        ...section,
+        items: (section.items || []).map(item => ({
+          ...item,
+          stato: "todo",
+          note: "",
+          timestamp: "",
+          photos: [],
+          photoDataUrl: "",
+          photoName: ""
+        }))
+      })),
+      audit: {}
+    };
+  }
+
+  // Restituisce i controlli KO privi delle note obbligatorie.
+  function findKoWithoutNotes(report) {
+    const problems = [];
+    for (const section of report?.sezioni || []) {
+      for (const item of section.items || []) {
+        if ((item.stato || "todo") === "ko" && !String(item.note || "").trim()) {
+          problems.push({ section, item });
+        }
+      }
+    }
+    return problems;
+  }
+
+  global.ReportModel = Object.freeze({
+    SCHEMA_VERSION,
+    addItem,
+    addSection,
+    canMoveItem,
+    canMoveSection,
+    cloneItem,
+    cloneSectionEmpty,
+    collectAllIds,
+    computeGlobalProgress,
+    computeSectionBadges,
+    computeSectionProgress,
+    findItem,
+    findKoWithoutNotes,
+    findSection,
+    moveItem,
+    moveSection,
+    normalizeModel,
+    normalizeOrders,
+    removeItem,
+    removeSection,
+    resetReport,
+    setItemState,
+    setSectionState,
+    sortByOrder,
+    updateAudit,
+    updateItem,
+    updateMeta,
+    updateSection,
+    validateModel
+  });
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+  <script>
+/* ========================================================================== */
 /* IMAGE UTILITIES                                                             */
 /*                                                                            */
 /* Tutte le scelte su peso e qualita delle foto sono raccolte qui.             */
@@ -1542,56 +2111,32 @@ window.LOGO_DATA_URL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEBLAEsAAD/2wBDAAM
 /* PDF UTILITIES - extracted from app.js                                       */
 /* ========================================================================== */
 
+(function initReportPdf(global) {
+"use strict";
 
 let logoDataUrl = undefined;    // cache logo per PDF
-
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-function formatDateDDMMYYYY(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  const day = pad2(d.getDate());
-  const month = pad2(d.getMonth() + 1);
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-function formatDateYYYYMMDD(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  const day = pad2(d.getDate());
-  const month = pad2(d.getMonth() + 1);
-  const year = d.getFullYear();
-  return `${year}${month}${day}`;
-}
-
-// Converte una data nel formato AAAAMMGG_HHMM usato nei nomi dei PDF.
-function formatDateTimeYYYYMMDDHHMM(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  return `${formatDateYYYYMMDD(d)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`;
-}
 /* 14) PDF                                                                     */
 /* ========================================================================== */
 
-async function generatePdf(isBlank) {
-  if (!model) return;
+async function generatePdf(reportModel, isBlank, generatedAt = new Date()) {
+  if (!reportModel) return;
 
-  if (!window.jspdf || !window.jspdf.jsPDF) {
+  if (!global.jspdf || !global.jspdf.jsPDF) {
     alert("jsPDF non caricato. Controlla libs/jspdf.umd.min.js e l’ordine degli script.");
     return;
   }
 
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = global.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
 
-  const centrale = model.meta.centraleNome || "";
-  const anno = model.meta.anno || "";
-  const preposto = model.meta.preposto || "";
-  const operatori = (model.meta.operatori || "").trim();
-  const dataInizio = model.meta.dataInizio || "";
-  const dataFine = model.meta.dataFine || "";
-  const oreFunzionamento = model.meta.oreFunzionamento ?? "";
-  const noteGenerali = String(model.meta.noteGenerali || "").trim();
+  const centrale = reportModel.meta.centraleNome || "";
+  const anno = reportModel.meta.anno || "";
+  const preposto = reportModel.meta.preposto || "";
+  const operatori = (reportModel.meta.operatori || "").trim();
+  const dataInizio = reportModel.meta.dataInizio || "";
+  const dataFine = reportModel.meta.dataFine || "";
+  const oreFunzionamento = reportModel.meta.oreFunzionamento ?? "";
+  const noteGenerali = String(reportModel.meta.noteGenerali || "").trim();
 
   // --- HEADER: prima scriviamo SEMPRE testo (così non esce mai vuoto) ---
   doc.setFontSize(14);
@@ -1608,7 +2153,7 @@ async function generatePdf(isBlank) {
   }
   doc.text(`Periodo: ${dataInizio}  ${dataFine ? "-> " + dataFine : ""}`, 14, 32);
 
-  const gp = getGlobalProgressForPdf();
+  const gp = getGlobalProgressForPdf(reportModel);
   const gpText = gp.total > 0
     ? `Completamento globale: ${gp.pct}% (${gp.done}/${gp.total}, NA: ${gp.na})`
     : "Completamento globale: 0% (nessun controllo)";
@@ -1676,8 +2221,8 @@ async function generatePdf(isBlank) {
 
   if (!isBlank) {
     const koItems = [];
-    for (const section of sortByOrder(model.sezioni)) {
-      for (const it of sortByOrder(section.items || [])) {
+    for (const section of global.ReportModel.sortByOrder(reportModel.sezioni)) {
+      for (const it of global.ReportModel.sortByOrder(section.items || [])) {
         if ((it.stato || "todo") !== "ko") continue;
         koItems.push({
           sezione: section.titolo || "",
@@ -1739,8 +2284,8 @@ async function generatePdf(isBlank) {
     }
   }
 
-  for (const section of sortByOrder(model.sezioni)) {
-    const items = sortByOrder(section.items || []);
+  for (const section of global.ReportModel.sortByOrder(reportModel.sezioni)) {
+    const items = global.ReportModel.sortByOrder(section.items || []);
     if (y > 270) { doc.addPage(); y = 20; }
 
     doc.setFontSize(12);
@@ -1748,57 +2293,63 @@ async function generatePdf(isBlank) {
     y += 4;
 
     if (canAutoTable) {
-      const rows = items.map(it => {
-        const st = isBlank ? "" : (it.stato || "todo");
-        const box = stateToBox(st);
-        const note = isBlank ? "" : (it.note || "");
-        return [box, it.testo, note];
+      const preparedRows = [];
+      for (const item of items) {
+        preparedRows.push({
+          item,
+          photos: isBlank ? [] : await prepareItemPhotos(item, 46, 32)
+        });
+      }
+
+      const rows = preparedRows.map(({ item, photos }) => {
+        const state = isBlank ? "" : (item.stato || "todo");
+        const baseCells = [stateToBox(state), item.testo, isBlank ? "" : (item.note || "")];
+        if (!isBlank) {
+          baseCells.push({
+            content: "",
+            styles: { minCellHeight: getPhotoCellHeight(photos) }
+          });
+        }
+        return baseCells;
       });
 
       doc.autoTable({
         startY: y,
-        head: [["", "Controllo", "Note"]],
+        head: [isBlank ? ["", "Controllo", "Note"] : ["", "Controllo", "Note", "Foto"]],
         body: rows,
         theme: "grid",
         styles: { fontSize: 9, cellPadding: 2, overflow: "linebreak" },
         headStyles: { fontSize: 9 },
-        columnStyles: {
-          0: { cellWidth: 10 },
-          1: { cellWidth: 110 },
-          2: { cellWidth: 60 }
+        columnStyles: isBlank
+          ? {
+              0: { cellWidth: 10 },
+              1: { cellWidth: 110 },
+              2: { cellWidth: 60 }
+            }
+          : {
+              0: { cellWidth: 10 },
+              1: { cellWidth: 75 },
+              2: { cellWidth: 45 },
+              3: { cellWidth: 50, cellPadding: 2, valign: "middle" }
+            },
+        rowPageBreak: "avoid",
+        didDrawCell: data => {
+          if (isBlank || data.section !== "body" || data.column.index !== 3) return;
+          drawPhotosInCell(doc, data.cell, preparedRows[data.row.index]?.photos || []);
         }
-
       });
 
       y = doc.lastAutoTable.finalY + 8;
-      if (!isBlank) {
-        for (const it of items) {
-          y = await appendItemPhoto(doc, it, y);
-        }
-      }
     } else {
-      doc.setFontSize(10);
-      for (const it of items) {
-        if (y > 280) { doc.addPage(); y = 20; }
-        const st = isBlank ? "" : (it.stato || "todo"); doc.text(`${stateToBox(st)} ${it.testo}`, 14, y);
-        y += 5;
-        if (!isBlank && it.note) {
-          doc.setFontSize(9);
-          doc.text(`Note: ${it.note}`, 18, y);
-          y += 5;
-          doc.setFontSize(10);
-        }
-        if (!isBlank) {
-          y = await appendItemPhoto(doc, it, y);
-        }
+      for (const item of items) {
+        y = await drawFallbackItemRow(doc, item, y, isBlank);
       }
       y += 6;
     }
   }
 
   const pageCount = doc.getNumberOfPages();
-  const generatedAt = new Date();
-  const gen = `${formatDateDDMMYYYY(generatedAt)} ${pad2(generatedAt.getHours())}:${pad2(generatedAt.getMinutes())}`;
+  const gen = `${global.ReportUtils.formatDateDDMMYYYY(generatedAt)} ${global.ReportUtils.pad2(generatedAt.getHours())}:${global.ReportUtils.pad2(generatedAt.getMinutes())}`;
 
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -1809,14 +2360,13 @@ async function generatePdf(isBlank) {
     doc.setTextColor(0);
   }
 
-  const safeNome = (centrale || "CENTRALE")
-    .toUpperCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^A-Z0-9_]/g, "");
-
-  const fileName = isBlank
-    ? `${safeNome}_${anno}_modulo_vuoto_${formatDateTimeYYYYMMDDHHMM(generatedAt)}.pdf`
-    : `${safeNome}_${anno}_stato_${formatDateTimeYYYYMMDDHHMM(generatedAt)}.pdf`;
+  const fileName = global.ReportUtils.buildExportFileName({
+    centrale: centrale || "CENTRALE",
+    anno,
+    label: isBlank ? "modulo_vuoto" : "stato",
+    date: generatedAt,
+    extension: "pdf"
+  });
 
   doc.save(fileName);
 }
@@ -1830,63 +2380,97 @@ function stateToBox(state) {
   return "[ ]";
 }
 
-async function appendItemPhoto(doc, item, y) {
-  const photos = Array.isArray(item.photos)
-    ? item.photos.filter(p => p && p.dataUrl)
+async function prepareItemPhotos(item, maxWidth, maxHeight) {
+  const sourcePhotos = Array.isArray(item.photos)
+    ? item.photos.filter(photo => photo && photo.dataUrl)
     : [];
-
-  if (!photos.length && item.photoDataUrl) {
-    photos.push({ dataUrl: item.photoDataUrl, name: item.photoName || "foto" });
+  if (!sourcePhotos.length && item.photoDataUrl) {
+    sourcePhotos.push({ dataUrl: item.photoDataUrl, name: item.photoName || "foto" });
   }
 
-  if (!photos.length) return y;
-
-  for (let i = 0; i < photos.length; i++) {
-    const p = photos[i];
-    let prepared = p;
-
+  const imageConfig = global.ReportImages?.CONFIG;
+  const effectiveMaxWidth = Math.min(maxWidth, imageConfig?.pdfMaxWidthMm || maxWidth);
+  const effectiveMaxHeight = Math.min(maxHeight, imageConfig?.pdfMaxHeightMm || maxHeight);
+  const result = [];
+  for (const source of sourcePhotos) {
+    let prepared = source;
     try {
-      if (window.ReportImages) {
-        prepared = await window.ReportImages.ensureOptimizedPhoto(p);
-      }
+      if (global.ReportImages) prepared = await global.ReportImages.ensureOptimizedPhoto(source);
     } catch (error) {
-      console.warn(`Foto non inserita (${p.name || "foto"}):`, error);
+      console.warn(`Foto non inserita (${source.name || "foto"}):`, error);
       continue;
     }
 
-    const type = getImageType(prepared.dataUrl);
-    const dims = prepared.width && prepared.height
-      ? { w: prepared.width, h: prepared.height }
+    const dimensions = prepared.width && prepared.height
+      ? { width: prepared.width, height: prepared.height }
       : await getImageDims(prepared.dataUrl);
-    if (!dims) continue;
+    if (!dimensions) continue;
+    const scale = Math.min(
+      effectiveMaxWidth / dimensions.width,
+      effectiveMaxHeight / dimensions.height,
+      1
+    );
+    result.push({
+      dataUrl: prepared.dataUrl,
+      type: getImageType(prepared.dataUrl),
+      width: dimensions.width * scale,
+      height: dimensions.height * scale
+    });
+  }
+  return result;
+}
 
-    const imageConfig = window.ReportImages?.CONFIG;
-    const maxW = imageConfig?.pdfMaxWidthMm || 180;
-    const maxH = imageConfig?.pdfMaxHeightMm || 60;
-    const scale = Math.min(maxW / dims.w, maxH / dims.h, 1);
-    const iw = dims.w * scale;
-    const ih = dims.h * scale;
+function getPhotoCellHeight(photos) {
+  if (!photos.length) return 8;
+  const imagesHeight = photos.reduce((total, photo) => total + photo.height, 0);
+  return imagesHeight + ((photos.length - 1) * 2) + 4;
+}
 
-    if (y + 4 + ih + 6 > 280) {
-      doc.addPage();
-      y = 20;
-    }
+function drawPhotosInCell(doc, cell, photos) {
+  if (!photos.length) return;
+  const contentHeight = photos.reduce((total, photo) => total + photo.height, 0)
+    + ((photos.length - 1) * 2);
+  let imageY = cell.y + Math.max(2, (cell.height - contentHeight) / 2);
 
-    doc.setFontSize(9);
-    const label = photos.length > 1 ? `Foto ${i + 1}: ${item.testo}` : `Foto: ${item.testo}`;
-    doc.text(label, 14, y);
-    y += 4;
-
+  for (const photo of photos) {
+    const imageX = cell.x + Math.max(2, (cell.width - photo.width) / 2);
     try {
-      doc.addImage(prepared.dataUrl, type, 14, y, iw, ih, undefined, "FAST");
-      y += ih + 6;
+      doc.addImage(photo.dataUrl, photo.type, imageX, imageY, photo.width, photo.height, undefined, "FAST");
     } catch (error) {
-      console.warn(`Foto non inserita (${p.name || "foto"}):`, error);
-      y += 2;
+      console.warn("Foto non inserita nella cella:", error);
     }
+    imageY += photo.height + 2;
+  }
+}
+
+async function drawFallbackItemRow(doc, item, y, isBlank) {
+  const photos = isBlank ? [] : await prepareItemPhotos(item, 48, 32);
+  const controlLines = doc.splitTextToSize(item.testo || "", isBlank ? 106 : 71);
+  const noteLines = doc.splitTextToSize(isBlank ? "" : (item.note || ""), isBlank ? 56 : 41);
+  const textHeight = Math.max(controlLines.length, noteLines.length, 1) * 4 + 4;
+  const rowHeight = Math.max(10, textHeight, getPhotoCellHeight(photos));
+
+  if (y + rowHeight > 280) {
+    doc.addPage();
+    y = 20;
   }
 
-  return y;
+  const stateRight = 24;
+  const controlRight = isBlank ? 134 : 99;
+  const noteRight = isBlank ? 196 : 144;
+  doc.rect(14, y, 182, rowHeight);
+  doc.line(stateRight, y, stateRight, y + rowHeight);
+  doc.line(controlRight, y, controlRight, y + rowHeight);
+  if (!isBlank) doc.line(noteRight, y, noteRight, y + rowHeight);
+
+  doc.setFontSize(9);
+  doc.text(stateToBox(isBlank ? "" : (item.stato || "todo")), 16, y + 5);
+  doc.text(controlLines, 26, y + 5);
+  doc.text(noteLines, controlRight + 2, y + 5);
+  if (!isBlank) {
+    drawPhotosInCell(doc, { x: noteRight, y, width: 52, height: rowHeight }, photos);
+  }
+  return y + rowHeight;
 }
 
 function getImageType(dataUrl) {
@@ -1899,33 +2483,14 @@ function getImageType(dataUrl) {
 function getImageDims(dataUrl) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
     img.onerror = () => resolve(null);
     img.src = dataUrl;
   });
 }
 
-function getGlobalProgressForPdf() {
-  if (typeof computeGlobalProgress === "function") {
-    return computeGlobalProgress();
-  }
-  if (!model || !Array.isArray(model.sezioni)) {
-    return { done: 0, total: 0, pct: 0, ok: 0, ko: 0, todo: 0, na: 0 };
-  }
-  let ok = 0, ko = 0, todo = 0, na = 0;
-  for (const s of model.sezioni) {
-    for (const it of (s.items || [])) {
-      const st = (it.stato || "todo");
-      if (st === "ok") ok++;
-      else if (st === "ko") ko++;
-      else if (st === "na") na++;
-      else todo++;
-    }
-  }
-  const total = ok + ko + todo;
-  const done = ok + ko;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  return { done, total, pct, ok, ko, todo, na };
+function getGlobalProgressForPdf(reportModel) {
+  return global.ReportModel.computeGlobalProgress(reportModel);
 }
 
 function loadLogoDataUrl() {
@@ -1934,8 +2499,8 @@ function loadLogoDataUrl() {
 
     // NOTE: se cambi logo.jpg, rigenera assets/logo.inline.js con:
     // ./scripts/update-logo-base64dataurl.sh
-    if (window.LOGO_DATA_URL) {
-      logoDataUrl = window.LOGO_DATA_URL;
+    if (global.LOGO_DATA_URL) {
+      logoDataUrl = global.LOGO_DATA_URL;
       return resolve(logoDataUrl);
     }
 
@@ -1945,6 +2510,9 @@ function loadLogoDataUrl() {
 }
 
 /* ========================================================================== */
+
+global.generatePdf = generatePdf;
+})(typeof window !== "undefined" ? window : globalThis);
 
 </script>
   <script>
@@ -1969,115 +2537,21 @@ let openedFileName = "";   // per suggerire il nome in export
 let showCompleted = true;  // mostra/nasconde controlli non "todo"
 const MAX_PHOTOS = 3;
 const APP_VERSION = "1.3.1"; // versione del programma, gestita in un solo punto
+const RM = window.ReportModel;
+const RU = window.ReportUtils;
 
 
 /* ========================================================================== */
 /* 02) DATE & IDS                                                              */
 /* ========================================================================== */
 
-// Raccoglie tutti gli identificativi di sezioni e controlli presenti nel modello.
-function collectAllIds(m) {
-  const set = new Set();
-  for (const s of m.sezioni || []) {
-    set.add(s.id);
-    for (const it of s.items || []) set.add(it.id);
-  }
-  return set;
-}
-
-// Genera un identificativo basato su data, ora e una componente casuale.
-function makeId(prefix) {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const mm = pad2(d.getMinutes());
-  const ss = pad2(d.getSeconds());
-  const rnd = Math.random().toString(36).slice(2, 7);
-  return `${prefix}_${y}${m}${day}_${hh}${mm}${ss}_${rnd}`;
-}
-
-// Genera un identificativo che non sia già presente nell'insieme ricevuto.
-function makeUniqueId(prefix, existingSet) {
-  let id = makeId(prefix);
-  while (existingSet.has(id)) id = makeId(prefix);
-  existingSet.add(id);
-  return id;
-}
-
-// Converte una data nel formato leggibile GG/MM/AAAA.
-function formatDateDDMMYYYY(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  const day = pad2(d.getDate());
-  const month = pad2(d.getMonth() + 1);
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-// Converte una data nel formato compatto AAAAMMGG usato nei nomi dei file.
-function formatDateYYYYMMDD(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  const day = pad2(d.getDate());
-  const month = pad2(d.getMonth() + 1);
-  const year = d.getFullYear();
-  return `${year}${month}${day}`;
-}
-
-// Converte una data nel formato AAAAMMGG_HHMM usato per distinguere gli export.
-function formatDateTimeYYYYMMDDHHMM(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  return `${formatDateYYYYMMDD(d)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`;
-}
-
-// Converte una data ISO AAAA-MM-GG nel formato GG/MM/AAAA.
-function formatYmdToDmy(ymd) {
-  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return "";
-  return `${m[3]}/${m[2]}/${m[1]}`;
-}
-
-// Converte una data GG/MM/AAAA nel formato ISO AAAA-MM-GG.
-function formatDmyToYmd(dmy) {
-  const m = String(dmy || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) return "";
-  return `${m[3]}-${m[2]}-${m[1]}`;
-}
-
-// Normalizza i diversi formati di data accettati nel formato GG/MM/AAAA.
-function normalizeDateString(value) {
-  const str = String(value ?? "").trim();
-  if (!str) return "";
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) return str;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return formatYmdToDmy(str);
-  const d = new Date(str);
-  if (!Number.isNaN(d.getTime())) return formatDateDDMMYYYY(d);
-  return str;
-}
-
-// Svuota i campi foto legacy dopo la migrazione all'array photos.
-function syncLegacyPhotoFields(it) {
-  // I campi legacy duplicavano per intero la prima foto nel JSON.
-  // Vengono ancora letti in normalizeModel, ma non sono piu salvati.
-  it.photoDataUrl = "";
-  it.photoName = "";
-}
-
-// Uniforma la struttura di una foto anche quando il modulo immagini non è disponibile.
-function normalizePhotoRecord(photo) {
-  if (window.ReportImages) return window.ReportImages.normalizePhotoRecord(photo);
-  return {
-    dataUrl: String(photo?.dataUrl || ""),
-    name: String(photo?.name || "foto")
-  };
-}
-
-// Ottimizza tutte le foto del modello e restituisce eventuali errori incontrati.
+// Ottimizza tutte le foto e restituisce un nuovo modello con gli eventuali errori.
 async function optimizeModelPhotos(targetModel) {
-  if (!window.ReportImages) return { optimized: 0, errors: [] };
+  if (!window.ReportImages) return { model: targetModel, optimized: 0, errors: [] };
 
   let optimized = 0;
   const errors = [];
+  let optimizedModel = targetModel;
 
   for (const section of targetModel.sezioni || []) {
     for (const item of section.items || []) {
@@ -2088,38 +2562,27 @@ async function optimizeModelPhotos(targetModel) {
           if (result.dataUrl !== photo.dataUrl) optimized++;
           prepared.push(result);
         } catch (error) {
-          prepared.push(normalizePhotoRecord(photo));
+          prepared.push(window.ReportImages.normalizePhotoRecord(photo));
           errors.push(`${photo.name || "foto"}: ${error.message}`);
         }
       }
-      item.photos = prepared;
-      syncLegacyPhotoFields(item);
+      optimizedModel = RM.updateItem(optimizedModel, section.id, item.id, current => ({
+        ...current,
+        photos: prepared,
+        photoDataUrl: "",
+        photoName: ""
+      }));
     }
   }
 
-  return { optimized, errors };
+  return { model: optimizedModel, optimized, errors };
 }
 
 // Converte il valore di un campo data HTML nel formato usato dal modello.
 function inputValueToDmy(value) {
   if (!value) return "";
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
-  return formatYmdToDmy(value);
-}
-
-// Restituisce la data corrente nel formato GG/MM/AAAA.
-function nowDmy() {
-  return formatDateDDMMYYYY(new Date());
-}
-
-// Aggiunge uno zero iniziale ai numeri composti da una sola cifra.
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-// Restituisce una copia dell'array ordinata in base al campo order.
-function sortByOrder(arr) {
-  return [...arr].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  return RU.formatYmdToDmy(value);
 }
 
 /* ========================================================================== */
@@ -2152,113 +2615,14 @@ function updateSubtitle() {
   sub.textContent = `${nome} | ${anno} | File: ${openedFileName || "non salvato"}`;
 }
 
-// Mostra il messaggio iniziale quando nessun file è stato caricato.
-function setSubtitleEmpty() {
-  const sub = document.getElementById("subtitle");
-  if (sub) sub.textContent = "Apri un file JSON per iniziare.";
-}
-
-/* ========================================================================== */
-/* 04) MODEL VALIDATION / NORMALIZATION                                        */
-/* ========================================================================== */
-
-// Completa e normalizza il modello importato per renderlo compatibile con l'app.
-function normalizeModel(m) {
-  // Normalizzazione minima per evitare undefined e per garantire funzioni UI (riordino, ecc.)
-  m.app = m.app || { schemaVersion: 1 };
-  m.app.schemaVersion = 2;
-  m.meta = m.meta || {};
-  m.sezioni = Array.isArray(m.sezioni) ? m.sezioni : [];
-  m.audit = m.audit || {};
-
-  if (m.meta.dataInizio !== undefined) m.meta.dataInizio = normalizeDateString(m.meta.dataInizio);
-  if (m.meta.dataFine !== undefined) m.meta.dataFine = normalizeDateString(m.meta.dataFine);
-  if (m.audit.lastModified !== undefined) m.audit.lastModified = normalizeDateString(m.audit.lastModified);
-
-  // Se mancano order (file vecchi), li assegniamo in base all'ordine corrente dell'array
-  let secOrder = 10;
-
-  for (const s of m.sezioni) {
-    // id/titolo/order
-    if (!s.id) s.id = makeUniqueId("sec", collectAllIds(m)); // fallback raro
-    if (s.titolo === undefined) s.titolo = "";
-    if (s.order === undefined || s.order === null || Number.isNaN(Number(s.order))) {
-      s.order = secOrder;
-    } else {
-      s.order = Number(s.order);
-    }
-    secOrder = Math.max(secOrder, s.order) + 10;
-
-    // items
-    s.items = Array.isArray(s.items) ? s.items : [];
-    let itemOrder = 10;
-    const itemOrders = [];
-    let needsReorder = false;
-
-    for (const it of s.items) {
-      if (!it.id) it.id = makeUniqueId("itm", collectAllIds(m));
-      if (it.testo === undefined) it.testo = "";
-
-      if (!it.stato) it.stato = "todo";
-      if (it.note === undefined) it.note = "";
-      if (it.photoDataUrl === undefined) it.photoDataUrl = "";
-      if (it.photoName === undefined) it.photoName = "";
-      if (!Array.isArray(it.photos)) it.photos = [];
-      if (!it.photos.length && it.photoDataUrl) {
-        it.photos = [{ dataUrl: it.photoDataUrl, name: it.photoName || "foto" }];
-      }
-      it.photos = it.photos
-        .filter(p => p && p.dataUrl)
-        .slice(0, MAX_PHOTOS)
-        .map(normalizePhotoRecord);
-      syncLegacyPhotoFields(it);
-      if (it.timestamp === undefined) it.timestamp = "";
-      if (it.timestamp) it.timestamp = normalizeDateString(it.timestamp);
-
-      if (it.order === undefined || it.order === null || Number.isNaN(Number(it.order))) {
-        it.order = itemOrder;
-        needsReorder = true;
-      } else {
-        it.order = Number(it.order);
-      }
-      itemOrders.push(it.order);
-      itemOrder = Math.max(itemOrder, it.order) + 10;
-    }
-
-    if (!needsReorder) {
-      const uniq = new Set(itemOrders);
-      if (uniq.size !== itemOrders.length) needsReorder = true;
-    }
-
-    if (needsReorder && s.items.length) {
-      let order = 10;
-      for (const it of s.items) {
-        it.order = order;
-        order += 10;
-      }
-    }
-  }
-
-  return m;
-}
-
-// Verifica che il JSON contenga la struttura minima richiesta dall'app.
-function validateModel(m) {
-  if (!m || typeof m !== "object") return "JSON non valido.";
-  if (!m.meta || !m.sezioni) return "Mancano meta o sezioni.";
-  if (!Array.isArray(m.sezioni)) return "sezioni deve essere un array.";
-  return "";
-}
-
 /* ========================================================================== */
 /* 05) AUDIT                                                                   */
 /* ========================================================================== */
 
 // Aggiorna i dati di audit dopo una modifica al modello.
 function touchAudit() {
-  if (!model.audit) model.audit = {};
-  model.audit.lastModified = nowDmy();
-  model.audit.lastModifiedBy = (model.meta.operatori || model.meta.preposto || "").trim();
+  const modifiedBy = (model.meta.operatori || model.meta.preposto || "").trim();
+  model = RM.updateAudit(model, RU.nowDmy(), modifiedBy);
 }
 
 /* ========================================================================== */
@@ -2282,13 +2646,13 @@ function bindMeta() {
     el.addEventListener("input", () => {
       if (!model) return;
       if (key === "anno") {
-        model.meta[key] = Number(el.value);
+        model = RM.updateMeta(model, key, Number(el.value));
       } else if (key === "dataInizio" || key === "dataFine") {
-        model.meta[key] = inputValueToDmy(el.value);
+        model = RM.updateMeta(model, key, inputValueToDmy(el.value));
       } else if (key === "oreFunzionamento") {
-        model.meta[key] = el.value === "" ? "" : Number(el.value);
+        model = RM.updateMeta(model, key, el.value === "" ? "" : Number(el.value));
       } else {
-        model.meta[key] = el.value;
+        model = RM.updateMeta(model, key, el.value);
       }
       touchAudit();
       updateSubtitle();
@@ -2303,52 +2667,15 @@ function renderMeta() {
   document.getElementById("metaAnno").value = model.meta.anno ?? "";
   document.getElementById("metaPreposto").value = model.meta.preposto ?? "";
   document.getElementById("metaOperatori").value = model.meta.operatori || "";
-  document.getElementById("metaDataInizio").value = formatDmyToYmd(model.meta.dataInizio ?? "");
-  document.getElementById("metaDataFine").value = formatDmyToYmd(model.meta.dataFine ?? "");
+  document.getElementById("metaDataInizio").value = RU.formatDmyToYmd(model.meta.dataInizio ?? "");
+  document.getElementById("metaDataFine").value = RU.formatDmyToYmd(model.meta.dataFine ?? "");
   document.getElementById("metaOreFunzionamento").value = model.meta.oreFunzionamento ?? "";
   document.getElementById("metaNoteGenerali").value = model.meta.noteGenerali ?? "";
-}
-
-// Svuota tutti i campi dei dati generali mostrati nell'interfaccia.
-function clearMetaInputs() {
-  document.getElementById("metaCentraleNome").value = "";
-  document.getElementById("metaAnno").value = "";
-  document.getElementById("metaPreposto").value = "";
-  document.getElementById("metaOperatori").value = "";
-  document.getElementById("metaDataInizio").value = "";
-  document.getElementById("metaDataFine").value = "";
-  document.getElementById("metaOreFunzionamento").value = "";
-  document.getElementById("metaNoteGenerali").value = "";
 }
 
 /* ========================================================================== */
 /* 07) SECTION STATS / PROGRESS                                                */
 /* ========================================================================== */
-
-// Conta i controlli della sezione raggruppandoli per stato.
-function computeSectionBadges(section) {
-  const counts = { todo: 0, ok: 0, ko: 0, na: 0 };
-  for (const it of section.items || []) {
-    const st = it.stato || "todo";
-    if (counts[st] === undefined) counts.todo++;
-    else counts[st]++;
-  }
-  return counts;
-}
-
-// Calcola quanti controlli della sezione sono completati e la loro percentuale.
-function computeSectionProgress(section) {
-  const total = (section.items || []).length;
-  if (total === 0) return { total: 0, done: 0, pct: 0 };
-
-  let done = 0;
-  for (const it of section.items) {
-    const st = it.stato || "todo";
-    if (st !== "todo") done++;
-  }
-  const pct = Math.round((done / total) * 100);
-  return { total, done, pct };
-}
 
 // Crea un badge visivo per mostrare il conteggio di uno stato.
 function makeBadge(kind, text) {
@@ -2370,32 +2697,6 @@ function makeProgressNode(pct) {
   return wrap;
 }
 
-// Calcola lo stato di avanzamento complessivo di tutte le sezioni.
-function computeGlobalProgress() {
-  if (!model || !Array.isArray(model.sezioni)) {
-    return { done: 0, total: 0, pct: 0, ok: 0, ko: 0, todo: 0, na: 0 };
-  }
-
-  let ok = 0, ko = 0, todo = 0, na = 0;
-
-  for (const s of model.sezioni) {
-    for (const it of (s.items || [])) {
-      const st = (it.stato || "todo");
-      if (st === "ok") ok++;
-      else if (st === "ko") ko++;
-      else if (st === "na") na++;
-      else todo++;
-    }
-  }
-
-  // escludo NA dal totale "applicabile"
-  const total = ok + ko + todo;
-  const done = ok + ko;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
-  return { done, total, pct, ok, ko, todo, na };
-}
-
 // Aggiorna la barra e i conteggi dell'avanzamento globale.
 function renderGlobalProgress() {
   const fill = document.getElementById("globalProgressFill");
@@ -2404,7 +2705,7 @@ function renderGlobalProgress() {
 
   if (!fill || !txt || !counts) return;
 
-  const p = computeGlobalProgress();
+  const p = RM.computeGlobalProgress(model);
   fill.style.width = `${p.pct}%`;
   txt.textContent = `${p.pct}%`;
   counts.textContent = p.total > 0
@@ -2419,14 +2720,12 @@ function renderGlobalProgress() {
 
 // Cerca un controllo tramite gli identificativi della sezione e del controllo.
 function findItem(sectionId, itemId) {
-  const s = findSection(sectionId);
-  if (!s) return null;
-  return (s.items || []).find(it => it.id === itemId);
+  return RM.findItem(model, sectionId, itemId);
 }
 
 // Cerca una sezione tramite il suo identificativo.
 function findSection(sectionId) {
-  return model.sezioni.find(s => s.id === sectionId);
+  return RM.findSection(model, sectionId);
 }
 
 /* ========================================================================== */
@@ -2455,134 +2754,107 @@ function openSection(sectionId) {
   if (el) el.open = true;
 }
 
-// Costruisce l'interfaccia completa di un singolo controllo.
-function renderItem(sectionId, itemId) {
-  const item = findItem(sectionId, itemId);
+// Costruisce il titolo e i comandi di modifica di un controllo.
+function renderItemTitle(sectionId, item) {
+  const row = document.createElement("div");
+  row.className = "item-title-row";
 
-  const wrap = document.createElement("div");
-  wrap.className = "item";
-  wrap.dataset.itemId = item.id;
-
-  const grid = document.createElement("div");
-  grid.className = "item-grid";
-
-  // --- Riga titolo + strumenti (a destra del titolo) ---
-  const titleRow = document.createElement("div");
-  titleRow.className = "item-title-row";
-
-  const titleLeft = document.createElement("div");
-  titleLeft.className = "item-title-left";
-
+  const title = document.createElement("div");
+  title.className = "item-title-left";
   const text = document.createElement("div");
   text.className = "item-text";
   text.textContent = item.testo;
-
-  titleLeft.appendChild(text);
+  title.appendChild(text);
 
   const tools = document.createElement("div");
   tools.className = "item-tools";
+  const definitions = [
+    ["Rinomina", "✏️", false, () => renameItem(sectionId, item.id)],
+    ["Duplica controllo", "⧉", false, () => cloneItem(sectionId, item.id)],
+    ["Sposta su", "⬆️", !canMove(sectionId, item.id, "up"), () => moveItem(sectionId, item.id, "up")],
+    ["Sposta giù", "⬇️", !canMove(sectionId, item.id, "down"), () => moveItem(sectionId, item.id, "down")],
+    ["Elimina", "🗑️", false, () => deleteItem(sectionId, item.id), "danger"]
+  ];
 
-  const btnUp = document.createElement("button");
-  btnUp.className = "icon-btn";
-  btnUp.type = "button";
-  btnUp.title = "Sposta su";
-  btnUp.textContent = "⬆️";
-  btnUp.disabled = !canMove(sectionId, itemId, "up");
-  btnUp.addEventListener("click", () => moveItem(sectionId, itemId, "up"));
+  for (const [label, icon, disabled, onClick, extraClass = ""] of definitions) {
+    const button = document.createElement("button");
+    button.className = `icon-btn${extraClass ? ` ${extraClass}` : ""}`;
+    button.type = "button";
+    button.title = label;
+    button.textContent = icon;
+    button.disabled = disabled;
+    button.addEventListener("click", onClick);
+    tools.appendChild(button);
+  }
 
-  const btnDown = document.createElement("button");
-  btnDown.className = "icon-btn";
-  btnDown.type = "button";
-  btnDown.title = "Sposta giù";
-  btnDown.textContent = "⬇️";
-  btnDown.disabled = !canMove(sectionId, itemId, "down");
-  btnDown.addEventListener("click", () => moveItem(sectionId, itemId, "down"));
+  row.appendChild(title);
+  row.appendChild(tools);
+  return row;
+}
 
-  const btnEdit = document.createElement("button");
-  btnEdit.className = "icon-btn";
-  btnEdit.type = "button";
-  btnEdit.title = "Rinomina";
-  btnEdit.textContent = "✏️";
-  btnEdit.addEventListener("click", () => renameItem(sectionId, itemId));
-
-  const btnClone = document.createElement("button");
-  btnClone.className = "icon-btn";
-  btnClone.type = "button";
-  btnClone.title = "Duplica controllo";
-  btnClone.textContent = "⧉";
-  btnClone.addEventListener("click", () => cloneItem(sectionId, itemId));
-
-  const btnDel = document.createElement("button");
-  btnDel.className = "icon-btn danger";
-  btnDel.type = "button";
-  btnDel.title = "Elimina";
-  btnDel.textContent = "🗑️";
-  btnDel.addEventListener("click", () => deleteItem(sectionId, itemId));
-
-  tools.appendChild(btnEdit);
-  tools.appendChild(btnClone);
-  tools.appendChild(btnUp);
-  tools.appendChild(btnDown);
-  tools.appendChild(btnDel);
-
-  titleRow.appendChild(titleLeft);
-  titleRow.appendChild(tools);
-
-  // --- Note ---
+// Costruisce e collega il campo note di un controllo.
+function renderItemNote(sectionId, item) {
   const note = document.createElement("textarea");
   note.className = "note";
   note.rows = 2;
   note.placeholder = "Note (obbligatorie se KO)";
   note.value = item.note ?? "";
-  if ((item.stato || "todo") === "ko" && !note.value.trim()) {
-    note.classList.add("required");
-  }
+  if ((item.stato || "todo") === "ko" && !note.value.trim()) note.classList.add("required");
 
   note.addEventListener("input", () => {
-    const it = findItem(sectionId, itemId);
-    it.note = note.value;
-
-    if (it.stato === "ko") {
-      if (!it.note.trim()) note.classList.add("required");
-      else note.classList.remove("required");
-    }
-
-    it.timestamp = nowDmy();
+    model = RM.updateItem(model, sectionId, item.id, current => ({
+      ...current,
+      note: note.value,
+      timestamp: RU.nowDmy()
+    }));
+    const current = findItem(sectionId, item.id);
+    note.classList.toggle("required", current.stato === "ko" && !current.note.trim());
     touchAudit();
   });
+  return note;
+}
 
-  // --- Stati: in fondo a destra ---
+// Costruisce i pulsanti che impostano lo stato di un controllo.
+function renderItemState(sectionId, item) {
   const footer = document.createElement("div");
   footer.className = "item-footer";
-
   const actions = document.createElement("div");
   actions.className = "item-actions";
-
-  const st = item.stato || "todo";
-  actions.appendChild(makeStateButton("todo", "Da fare", st === "todo", () => setState(sectionId, itemId, "todo")));
-  actions.appendChild(makeStateButton("ok", "OK", st === "ok", () => setState(sectionId, itemId, "ok")));
-  actions.appendChild(makeStateButton("ko", "KO", st === "ko", () => setState(sectionId, itemId, "ko")));
-  actions.appendChild(makeStateButton("na", "N.A.", st === "na", () => setState(sectionId, itemId, "na")));
-
+  const state = item.stato || "todo";
+  actions.appendChild(makeStateButton("todo", "Da fare", state === "todo", () => setState(sectionId, item.id, "todo")));
+  actions.appendChild(makeStateButton("ok", "OK", state === "ok", () => setState(sectionId, item.id, "ok")));
+  actions.appendChild(makeStateButton("ko", "KO", state === "ko", () => setState(sectionId, item.id, "ko")));
+  actions.appendChild(makeStateButton("na", "N.A.", state === "na", () => setState(sectionId, item.id, "na")));
   footer.appendChild(actions);
+  return footer;
+}
 
-  // --- Allegato foto (fino a 3 per controllo) ---
+// Costruisce la gestione degli allegati fotografici di un controllo.
+function renderItemPhotos(sectionId, item) {
   const attachment = document.createElement("div");
   attachment.className = "item-attachment";
-
   const photoInput = document.createElement("input");
   photoInput.type = "file";
   photoInput.accept = "image/jpeg,image/png,image/webp,image/bmp,.bmp";
   photoInput.className = "item-photo-input";
   photoInput.title = "Allega una foto";
   photoInput.hidden = true;
+  attachment.appendChild(photoInput);
 
+  const photosWrap = document.createElement("div");
+  photosWrap.className = "item-photos";
+  const photos = Array.isArray(item.photos) ? item.photos : [];
   let targetPhotoIndex = -1;
+
+  const addLabel = document.createElement("span");
+  addLabel.className = "item-photo-label";
+  addLabel.textContent = photos.length >= MAX_PHOTOS
+    ? "Limite massimo raggiunto"
+    : `Fino a ${MAX_PHOTOS} foto - JPG, PNG, WebP o BMP`;
 
   photoInput.addEventListener("change", async () => {
     const file = photoInput.files?.[0];
     if (!file) return;
-
     const selectedIndex = targetPhotoIndex;
     photoInput.value = "";
     photoInput.disabled = true;
@@ -2591,12 +2863,17 @@ function renderItem(sectionId, itemId) {
     try {
       if (!window.ReportImages) throw new Error("Modulo immagini non caricato.");
       const optimizedPhoto = await window.ReportImages.optimizeFile(file);
-      const it = findItem(sectionId, itemId);
-      const photos = Array.isArray(it.photos) ? [...it.photos] : [];
-      const idx = selectedIndex < 0 ? photos.length : selectedIndex;
-      photos[idx] = optimizedPhoto;
-      it.photos = photos.filter(p => p && p.dataUrl).slice(0, MAX_PHOTOS);
-      syncLegacyPhotoFields(it);
+      model = RM.updateItem(model, sectionId, item.id, current => {
+        const nextPhotos = Array.isArray(current.photos) ? [...current.photos] : [];
+        const index = selectedIndex < 0 ? nextPhotos.length : selectedIndex;
+        nextPhotos[index] = optimizedPhoto;
+        return {
+          ...current,
+          photos: nextPhotos.filter(photo => photo && photo.dataUrl).slice(0, MAX_PHOTOS),
+          photoDataUrl: "",
+          photoName: ""
+        };
+      });
       touchAudit();
       rerenderAll();
     } catch (error) {
@@ -2608,60 +2885,47 @@ function renderItem(sectionId, itemId) {
     }
   });
 
-  attachment.appendChild(photoInput);
-
-  const photosWrap = document.createElement("div");
-  photosWrap.className = "item-photos";
-
-  const photos = Array.isArray(item.photos) ? item.photos : [];
-  for (let i = 0; i < photos.length; i++) {
-    const p = photos[i];
-    if (!p || !p.dataUrl) continue;
-
+  for (let index = 0; index < photos.length; index++) {
+    const photo = photos[index];
+    if (!photo?.dataUrl) continue;
     const card = document.createElement("div");
     card.className = "item-photo-card";
-
     const box = document.createElement("button");
     box.type = "button";
     box.className = "item-photo-box has-photo";
     box.title = "Sostituisci foto";
     box.addEventListener("click", () => {
-      targetPhotoIndex = i;
+      targetPhotoIndex = index;
       photoInput.click();
     });
 
     const preview = document.createElement("img");
     preview.className = "item-photo-preview";
     preview.alt = "Anteprima foto";
-    preview.src = p.dataUrl;
-
-    const btnClear = document.createElement("button");
-    btnClear.type = "button";
-    btnClear.className = "item-photo-clear";
-    btnClear.textContent = "×";
-    btnClear.title = "Rimuovi foto";
-    btnClear.addEventListener("click", (e) => {
-      e.stopPropagation();
-    });
-    btnClear.addEventListener("click", () => {
-      const it = findItem(sectionId, itemId);
-      const list = Array.isArray(it.photos) ? [...it.photos] : [];
-      list.splice(i, 1);
-      it.photos = list;
-      syncLegacyPhotoFields(it);
+    preview.src = photo.dataUrl;
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "item-photo-clear";
+    removeButton.textContent = "×";
+    removeButton.title = "Rimuovi foto";
+    removeButton.addEventListener("click", event => {
+      event.stopPropagation();
+      model = RM.updateItem(model, sectionId, item.id, current => ({
+        ...current,
+        photos: (current.photos || []).filter((_, photoIndex) => photoIndex !== index),
+        photoDataUrl: "",
+        photoName: ""
+      }));
       touchAudit();
       rerenderAll();
     });
 
     const label = document.createElement("span");
     label.className = "item-photo-label";
-    const details = window.ReportImages
-      ? window.ReportImages.describePhoto(p)
-      : (p.name || "foto");
-    label.textContent = `Foto ${i + 1}: ${details}`;
-
+    const description = window.ReportImages?.describePhoto(photo) || photo.name || "foto";
+    label.textContent = `Foto ${index + 1}: ${description}`;
     box.appendChild(preview);
-    box.appendChild(btnClear);
+    box.appendChild(removeButton);
     card.appendChild(box);
     card.appendChild(label);
     photosWrap.appendChild(card);
@@ -2669,30 +2933,39 @@ function renderItem(sectionId, itemId) {
 
   const addCard = document.createElement("div");
   addCard.className = "item-photo-card";
-
-  const addBox = document.createElement("button");
-  addBox.type = "button";
-  addBox.className = "item-photo-box";
-  addBox.title = "Aggiungi foto";
-  addBox.innerHTML = "<span class=\"item-photo-icon\">📷</span><span class=\"item-photo-text\">Aggiungi foto</span>";
-  addBox.disabled = photos.length >= MAX_PHOTOS;
-  addBox.addEventListener("click", () => {
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "item-photo-box";
+  addButton.title = "Aggiungi foto";
+  addButton.innerHTML = '<span class="item-photo-icon">📷</span><span class="item-photo-text">Aggiungi foto</span>';
+  addButton.disabled = photos.length >= MAX_PHOTOS;
+  addButton.addEventListener("click", () => {
     if (photos.length >= MAX_PHOTOS) return;
     targetPhotoIndex = photos.length;
     photoInput.click();
   });
-
-  const addLabel = document.createElement("span");
-  addLabel.className = "item-photo-label";
-  addLabel.textContent = photos.length >= MAX_PHOTOS
-    ? "Limite massimo raggiunto"
-    : `Fino a ${MAX_PHOTOS} foto - JPG, PNG, WebP o BMP`;
-
-  addCard.appendChild(addBox);
+  addCard.appendChild(addButton);
   addCard.appendChild(addLabel);
   photosWrap.appendChild(addCard);
-
   attachment.appendChild(photosWrap);
+  return attachment;
+}
+
+// Costruisce l'interfaccia completa di un singolo controllo.
+function renderItem(sectionId, itemId) {
+  const item = findItem(sectionId, itemId);
+
+  const wrap = document.createElement("div");
+  wrap.className = "item";
+  wrap.dataset.itemId = item.id;
+
+  const grid = document.createElement("div");
+  grid.className = "item-grid";
+
+  const titleRow = renderItemTitle(sectionId, item);
+  const note = renderItemNote(sectionId, item);
+  const attachment = renderItemPhotos(sectionId, item);
+  const footer = renderItemState(sectionId, item);
 
   grid.appendChild(titleRow);
   grid.appendChild(note);
@@ -2716,200 +2989,141 @@ function updateToggleCompletedLabel() {
   btn.textContent = showCompleted ? "Nascondi completati" : "Mostra completati";
 }
 
+// Costruisce i comandi di modifica mostrati nel titolo di una sezione.
+function renderSectionTools(section) {
+  const tools = document.createElement("div");
+  tools.className = "section-tools";
+  const definitions = [
+    ["Rinomina sezione", "✏️", false, () => renameSection(section.id)],
+    ["Duplica sezione", "⧉", false, () => cloneSection(section.id)],
+    ["Sposta sezione su", "⬆️", !canMoveSection(section.id, "up"), () => moveSection(section.id, "up")],
+    ["Sposta sezione giù", "⬇️", !canMoveSection(section.id, "down"), () => moveSection(section.id, "down")],
+    ["Elimina sezione (perde i controlli figli)", "🗑️", false, () => deleteSectionDangerous(section.id), "danger"]
+  ];
+
+  for (const [label, icon, disabled, action, extraClass = ""] of definitions) {
+    const button = document.createElement("button");
+    button.className = `icon-btn${extraClass ? ` ${extraClass}` : ""}`;
+    button.type = "button";
+    button.title = label;
+    button.textContent = icon;
+    button.disabled = disabled;
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    });
+    tools.appendChild(button);
+  }
+  return tools;
+}
+
+// Costruisce il riepilogo con titolo, avanzamento e badge di una sezione.
+function renderSectionSummary(section) {
+  const summary = document.createElement("summary");
+  const title = document.createElement("div");
+  title.className = "section-title";
+  const titleText = document.createElement("div");
+  titleText.className = "section-title-text";
+  titleText.textContent = section.titolo;
+  title.appendChild(titleText);
+  title.appendChild(renderSectionTools(section));
+
+  const progress = RM.computeSectionProgress(section);
+  const progressWrap = document.createElement("div");
+  progressWrap.className = "summary-right";
+  const progressLabel = document.createElement("div");
+  progressLabel.className = "progress-label";
+  progressLabel.textContent = `${progress.done}/${progress.total} (${progress.pct}%)`;
+  progressWrap.appendChild(progressLabel);
+  progressWrap.appendChild(makeProgressNode(progress.pct));
+
+  const badges = document.createElement("div");
+  badges.className = "badges";
+  const counts = RM.computeSectionBadges(section);
+  badges.appendChild(makeBadge("todo", `Da fare ${counts.todo}`));
+  badges.appendChild(makeBadge("ok", `OK ${counts.ok}`));
+  badges.appendChild(makeBadge("ko", `KO ${counts.ko}`));
+  badges.appendChild(makeBadge("na", `N.A. ${counts.na}`));
+
+  summary.appendChild(title);
+  summary.appendChild(progressWrap);
+  summary.appendChild(badges);
+  return summary;
+}
+
+// Costruisce i comandi collettivi disponibili nel corpo di una sezione.
+function renderSectionActions(section) {
+  const row = document.createElement("div");
+  row.className = "row-actions";
+  const buttons = document.createElement("div");
+  buttons.className = "section-action-buttons";
+  const definitions = [
+    ["+ Aggiungi controllo", "", "Aggiunge un controllo alla sezione", () => addControl(section.id)],
+    ["✓ Check tutti", "section-check-all", "Imposta tutti i controlli della sezione su OK", () => setSectionState(section.id, "ok")],
+    ["○ Uncheck tutti", "section-uncheck-all", "Riporta tutti i controlli della sezione su Da fare", () => setSectionState(section.id, "todo")]
+  ];
+
+  for (const [label, extraClass, title, action] of definitions) {
+    const button = document.createElement("button");
+    button.className = `btn btn-small${extraClass ? ` ${extraClass}` : ""}`;
+    button.type = "button";
+    button.textContent = label;
+    button.title = title;
+    button.disabled = Boolean(extraClass) && !(section.items || []).length;
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+      openSection(section.id);
+    });
+    buttons.appendChild(button);
+  }
+
+  const hint = document.createElement("div");
+  hint.className = "small-muted";
+  hint.textContent = "KO richiede note obbligatorie.";
+  row.appendChild(buttons);
+  row.appendChild(hint);
+  return row;
+}
+
+// Costruisce il corpo di una sezione con azioni e controlli visibili.
+function renderSectionBody(section) {
+  const body = document.createElement("div");
+  body.className = "section-body";
+  body.appendChild(renderSectionActions(section));
+  for (const item of RM.sortByOrder(section.items || [])) {
+    if (shouldRenderItem(item)) body.appendChild(renderItem(section.id, item.id));
+  }
+  return body;
+}
+
+// Costruisce una singola sezione completa dell'accordion.
+function renderSection(section, isOpen) {
+  const details = document.createElement("details");
+  details.className = "section";
+  details.dataset.sectionId = section.id;
+  details.open = isOpen;
+  details.appendChild(renderSectionSummary(section));
+  details.appendChild(renderSectionBody(section));
+  return details;
+}
+
 // Disegna tutte le sezioni conservando quelle che erano già aperte.
 function renderSections(openSet = new Set()) {
   const container = document.getElementById("sections");
   container.innerHTML = "";
 
-  const sectionsSorted = sortByOrder(model.sezioni);
+  const sections = RM.sortByOrder(model.sezioni);
 
-  if (sectionsSorted.length === 0) {
+  if (sections.length === 0) {
     container.innerHTML = `<div class="empty-hint">Nessuna sezione presente.</div>`;
     return;
   }
 
-  for (const section of sectionsSorted) {
-    // --- wrapper sezione ---
-    const details = document.createElement("details");
-    details.className = "section";
-    details.dataset.sectionId = section.id;
-    details.open = openSet.has(section.id);
-
-    // --- summary ---
-    const summary = document.createElement("summary");
-
-    // ====== LEFT: titolo + tools sezione ======
-    const left = document.createElement("div");
-    left.className = "section-title";
-
-    const titleText = document.createElement("div");
-    titleText.className = "section-title-text";
-    titleText.textContent = section.titolo;
-
-    const secTools = document.createElement("div");
-    secTools.className = "section-tools";
-
-    const sEdit = document.createElement("button");
-    sEdit.className = "icon-btn";
-    sEdit.type = "button";
-    sEdit.title = "Rinomina sezione";
-    sEdit.textContent = "✏️";
-    sEdit.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      renameSection(section.id);
-    });
-
-    const sClone = document.createElement("button");
-    sClone.className = "icon-btn";
-    sClone.type = "button";
-    sClone.title = "Duplica sezione";
-    sClone.textContent = "⧉";
-    sClone.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      cloneSection(section.id);
-    });
-
-    const sUp = document.createElement("button");
-    sUp.className = "icon-btn";
-    sUp.type = "button";
-    sUp.title = "Sposta sezione su";
-    sUp.textContent = "⬆️";
-    sUp.disabled = !canMoveSection(section.id, "up");
-    sUp.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      moveSection(section.id, "up");
-    });
-
-    const sDown = document.createElement("button");
-    sDown.className = "icon-btn";
-    sDown.type = "button";
-    sDown.title = "Sposta sezione giù";
-    sDown.textContent = "⬇️";
-    sDown.disabled = !canMoveSection(section.id, "down");
-    sDown.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      moveSection(section.id, "down");
-    });
-
-    const sDel = document.createElement("button");
-    sDel.className = "icon-btn danger";
-    sDel.type = "button";
-    sDel.title = "Elimina sezione (perde i controlli figli)";
-    sDel.textContent = "🗑️";
-    sDel.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      deleteSectionDangerous(section.id);
-    });
-
-    secTools.appendChild(sEdit);
-    secTools.appendChild(sClone);
-    secTools.appendChild(sUp);
-    secTools.appendChild(sDown);
-    secTools.appendChild(sDel);
-
-    left.appendChild(titleText);
-    left.appendChild(secTools);
-    // ====== /LEFT ======
-
-    // --- RIGHT: progress ---
-    const prog = computeSectionProgress(section);
-    const right = document.createElement("div");
-    right.className = "summary-right";
-
-    const progLabel = document.createElement("div");
-    progLabel.className = "progress-label";
-    progLabel.textContent = `${prog.done}/${prog.total} (${prog.pct}%)`;
-
-    const progBar = makeProgressNode(prog.pct);
-
-    right.appendChild(progLabel);
-    right.appendChild(progBar);
-
-    // --- badges ---
-    const badges = document.createElement("div");
-    badges.className = "badges";
-    const c = computeSectionBadges(section);
-    badges.appendChild(makeBadge("todo", `Da fare ${c.todo}`));
-    badges.appendChild(makeBadge("ok", `OK ${c.ok}`));
-    badges.appendChild(makeBadge("ko", `KO ${c.ko}`));
-    badges.appendChild(makeBadge("na", `N.A. ${c.na}`));
-
-    summary.appendChild(left);
-    summary.appendChild(right);
-    summary.appendChild(badges);
-
-    // --- body ---
-    const body = document.createElement("div");
-    body.className = "section-body";
-
-    // azioni sezione nel body
-    const rowActions = document.createElement("div");
-    rowActions.className = "row-actions";
-
-    const addBtn = document.createElement("button");
-    addBtn.className = "btn btn-small";
-    addBtn.type = "button";
-    addBtn.textContent = "+ Aggiungi controllo";
-    addBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      addControl(section.id);
-      openSection(section.id);
-    });
-
-    const checkAllBtn = document.createElement("button");
-    checkAllBtn.className = "btn btn-small section-check-all";
-    checkAllBtn.type = "button";
-    checkAllBtn.textContent = "✓ Check tutti";
-    checkAllBtn.title = "Imposta tutti i controlli della sezione su OK";
-    checkAllBtn.disabled = !(section.items || []).length;
-    checkAllBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setSectionState(section.id, "ok");
-    });
-
-    const uncheckAllBtn = document.createElement("button");
-    uncheckAllBtn.className = "btn btn-small section-uncheck-all";
-    uncheckAllBtn.type = "button";
-    uncheckAllBtn.textContent = "○ Uncheck tutti";
-    uncheckAllBtn.title = "Riporta tutti i controlli della sezione su Da fare";
-    uncheckAllBtn.disabled = !(section.items || []).length;
-    uncheckAllBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setSectionState(section.id, "todo");
-    });
-
-    const actionButtons = document.createElement("div");
-    actionButtons.className = "section-action-buttons";
-    actionButtons.appendChild(addBtn);
-    actionButtons.appendChild(checkAllBtn);
-    actionButtons.appendChild(uncheckAllBtn);
-
-    const small = document.createElement("div");
-    small.className = "small-muted";
-    small.textContent = "KO richiede note obbligatorie.";
-
-    rowActions.appendChild(actionButtons);
-    rowActions.appendChild(small);
-    body.appendChild(rowActions);
-
-    // items
-    const itemsSorted = sortByOrder(section.items || []);
-    for (const item of itemsSorted) {
-      if (!shouldRenderItem(item)) continue;
-      body.appendChild(renderItem(section.id, item.id));
-    }
-
-    details.appendChild(summary);
-    details.appendChild(body);
-    container.appendChild(details);
+  for (const section of sections) {
+    container.appendChild(renderSection(section, openSet.has(section.id)));
   }
 }
 
@@ -2938,12 +3152,11 @@ function addControl(sectionId) {
   const testo = prompt(`Nuovo controllo in "${section.titolo}":`);
   if (!testo || !testo.trim()) return;
 
-  const existing = collectAllIds(model);
-  const newId = makeUniqueId("itm", existing);
+  const existing = RM.collectAllIds(model);
+  const newId = RU.makeUniqueId("itm", existing);
 
   const maxOrder = Math.max(0, ...(section.items || []).map(it => it.order ?? 0));
-  section.items = section.items || [];
-  section.items.push({
+  const item = {
     id: newId,
     testo: testo.trim(),
     order: maxOrder + 10,
@@ -2952,7 +3165,8 @@ function addControl(sectionId) {
     photos: [],
     photoDataUrl: "",
     photoName: ""
-  });
+  };
+  model = RM.addItem(model, sectionId, item);
 
   touchAudit();
   rerenderAll();
@@ -2964,11 +3178,11 @@ function addSection() {
   const titolo = prompt("Titolo nuova sezione:");
   if (!titolo || !titolo.trim()) return;
 
-  const existing = collectAllIds(model);
-  const newId = makeUniqueId("sec", existing);
+  const existing = RM.collectAllIds(model);
+  const newId = RU.makeUniqueId("sec", existing);
 
   const maxOrder = Math.max(0, ...model.sezioni.map(s => s.order ?? 0));
-  model.sezioni.push({
+  model = RM.addSection(model, {
     id: newId,
     titolo: titolo.trim(),
     order: maxOrder + 10,
@@ -2982,15 +3196,7 @@ function addSection() {
 
 // Verifica se un controllo può essere spostato nella direzione richiesta.
 function canMove(sectionId, itemId, direction) {
-  const s = findSection(sectionId);
-  if (!s || !Array.isArray(s.items)) return false;
-
-  const itemsSorted = sortByOrder(s.items);
-  const idx = itemsSorted.findIndex(x => x.id === itemId);
-  if (idx < 0) return false;
-
-  if (direction === "up") return idx > 0;
-  return idx < itemsSorted.length - 1;
+  return RM.canMoveItem(model, sectionId, itemId, direction);
 }
 
 // Elimina un controllo dopo aver chiesto conferma all'utente.
@@ -3004,7 +3210,7 @@ function deleteItem(sectionId, itemId) {
   const ok = confirm(`Eliminare questo controllo?\n\n- ${it.testo}`);
   if (!ok) return;
 
-  s.items = s.items.filter(x => x.id !== itemId);
+  model = RM.removeItem(model, sectionId, itemId);
 
   touchAudit();
   rerenderAll();
@@ -3012,25 +3218,7 @@ function deleteItem(sectionId, itemId) {
 
 // Sposta un controllo scambiandone l'ordine con quello adiacente.
 function moveItem(sectionId, itemId, direction) {
-  const s = findSection(sectionId);
-  if (!s || !Array.isArray(s.items)) return;
-
-  const itemsSorted = sortByOrder(s.items);
-  const idx = itemsSorted.findIndex(x => x.id === itemId);
-  if (idx < 0) return;
-
-  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-  if (swapIdx < 0 || swapIdx >= itemsSorted.length) return;
-
-  const a = itemsSorted[idx];
-  const b = itemsSorted[swapIdx];
-
-  // scambio order (semplice, stabile)
-  const ao = a.order ?? 0;
-  const bo = b.order ?? 0;
-  a.order = bo;
-  b.order = ao;
-
+  model = RM.moveItem(model, sectionId, itemId, direction);
   touchAudit();
   rerenderAll();
 }
@@ -3045,27 +3233,13 @@ function renameItem(sectionId, itemId) {
   const txt = nuovo.trim();
   if (!txt) return;
 
-  it.testo = txt;
-  it.timestamp = nowDmy();
+  model = RM.updateItem(model, sectionId, itemId, current => ({
+    ...current,
+    testo: txt,
+    timestamp: RU.nowDmy()
+  }));
   touchAudit();
   rerenderAll();
-}
-
-// Riassegna valori di ordinamento regolari a sezioni e controlli.
-function normalizeSectionAndItemOrders() {
-  const sectionsSorted = sortByOrder(model.sezioni);
-  let secOrder = 10;
-  for (const section of sectionsSorted) {
-    section.order = secOrder;
-    secOrder += 10;
-
-    const itemsSorted = sortByOrder(section.items || []);
-    let itemOrder = 10;
-    for (const item of itemsSorted) {
-      item.order = itemOrder;
-      itemOrder += 10;
-    }
-  }
 }
 
 // Duplica un controllo all'interno della stessa sezione.
@@ -3080,24 +3254,15 @@ function cloneItem(sectionId, itemId) {
   const s = findSection(sectionId);
   if (!s) return;
 
-  const existing = collectAllIds(model);
-  const newId = makeUniqueId("itm", existing);
-  const newItem = {
-    ...original,
+  const existing = RM.collectAllIds(model);
+  const newId = RU.makeUniqueId("itm", existing);
+  const newItem = RM.cloneItem(original, {
     id: newId,
     testo,
-    order: original.order ?? 0,
-    photos: Array.isArray(original.photos)
-      ? original.photos.map(normalizePhotoRecord)
-      : [],
-    photoDataUrl: "",
-    photoName: "",
-    timestamp: nowDmy()
-  };
+    timestamp: RU.nowDmy()
+  });
 
-  s.items = s.items || [];
-  s.items.push(newItem);
-  normalizeSectionAndItemOrders();
+  model = RM.normalizeOrders(RM.addItem(model, sectionId, newItem));
   touchAudit();
   rerenderAll();
   openSection(sectionId);
@@ -3112,33 +3277,17 @@ function cloneSection(sectionId) {
   const titolo = nuovo.trim();
   if (!titolo) return;
 
-  const existing = collectAllIds(model);
-  const newSectionId = makeUniqueId("sec", existing);
-
-  const clonedItems = (sortByOrder(original.items || [])).map(item => {
-    const itemId = makeUniqueId("itm", existing);
-    return {
-      ...item,
-      id: itemId,
-      order: item.order ?? 0,
-      stato: "todo",
-      note: "",
-      photos: [],
-      photoDataUrl: "",
-      photoName: "",
-      timestamp: ""
-    };
-  });
-
-  const cloneSection = {
+  const existing = RM.collectAllIds(model);
+  const newSectionId = RU.makeUniqueId("sec", existing);
+  const itemIds = RM.sortByOrder(original.items || [])
+    .map(() => RU.makeUniqueId("itm", existing));
+  const clonedSection = RM.cloneSectionEmpty(original, {
     id: newSectionId,
     titolo,
-    order: original.order ?? 0,
-    items: clonedItems
-  };
+    itemIds
+  });
 
-  model.sezioni.push(cloneSection);
-  normalizeSectionAndItemOrders();
+  model = RM.normalizeOrders(RM.addSection(model, clonedSection));
   touchAudit();
   rerenderAll();
   openSection(newSectionId);
@@ -3150,11 +3299,7 @@ function cloneSection(sectionId) {
 
 // Verifica se una sezione può essere spostata nella direzione richiesta.
 function canMoveSection(sectionId, direction) {
-  const sectionsSorted = sortByOrder(model.sezioni);
-  const idx = sectionsSorted.findIndex(x => x.id === sectionId);
-  if (idx < 0) return false;
-  if (direction === "up") return idx > 0;
-  return idx < sectionsSorted.length - 1;
+  return RM.canMoveSection(model, sectionId, direction);
 }
 
 // Elimina una sezione e tutti i suoi controlli dopo una doppia conferma.
@@ -3177,7 +3322,7 @@ function deleteSectionDangerous(sectionId) {
     return;
   }
 
-  model.sezioni = model.sezioni.filter(x => x.id !== sectionId);
+  model = RM.removeSection(model, sectionId);
 
   touchAudit();
   rerenderAll();
@@ -3185,21 +3330,7 @@ function deleteSectionDangerous(sectionId) {
 
 // Sposta una sezione scambiandone l'ordine con quella adiacente.
 function moveSection(sectionId, direction) {
-  const sectionsSorted = sortByOrder(model.sezioni);
-  const idx = sectionsSorted.findIndex(x => x.id === sectionId);
-  if (idx < 0) return;
-
-  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-  if (swapIdx < 0 || swapIdx >= sectionsSorted.length) return;
-
-  const a = sectionsSorted[idx];
-  const b = sectionsSorted[swapIdx];
-
-  const ao = a.order ?? 0;
-  const bo = b.order ?? 0;
-  a.order = bo;
-  b.order = ao;
-
+  model = RM.moveSection(model, sectionId, direction);
   touchAudit();
   rerenderAll();
 }
@@ -3214,7 +3345,7 @@ function renameSection(sectionId) {
   const txt = nuovo.trim();
   if (!txt) return;
 
-  s.titolo = txt;
+  model = RM.updateSection(model, sectionId, section => ({ ...section, titolo: txt }));
   touchAudit();
   rerenderAll();
 }
@@ -3228,12 +3359,7 @@ function setSectionState(sectionId, state) {
   const section = findSection(sectionId);
   if (!section) return;
 
-  const timestamp = nowDmy();
-  for (const item of section.items || []) {
-    item.stato = state;
-    item.timestamp = timestamp;
-  }
-
+  model = RM.setSectionState(model, sectionId, state, RU.nowDmy());
   touchAudit();
   rerenderAll();
   openSection(sectionId);
@@ -3248,8 +3374,7 @@ function setState(sectionId, itemId, state) {
   if (state === "ko") {
     if (!String(it.note ?? "").trim()) {
       // settiamo lo stato, ma evidenziamo subito e lasciamo l’utente scrivere note
-      it.stato = "ko";
-      it.timestamp = nowDmy();
+      model = RM.setItemState(model, sectionId, itemId, "ko", RU.nowDmy());
       touchAudit();
       rerenderAll();
       alert("Stato KO: inserire le note (obbligatorie).");
@@ -3257,8 +3382,7 @@ function setState(sectionId, itemId, state) {
     }
   }
 
-  it.stato = state;
-  it.timestamp = nowDmy();
+  model = RM.setItemState(model, sectionId, itemId, state, RU.nowDmy());
   // Se stai uscendo da KO e le note erano marcate required, ok.
   touchAudit();
   rerenderAll();
@@ -3286,20 +3410,14 @@ function exportJson() {
   if (!model) return;
 
   // Validazione KO -> note obbligatorie
-  const problems = [];
-  for (const s of model.sezioni) {
-    for (const it of s.items || []) {
-      if ((it.stato || "todo") === "ko" && !String(it.note || "").trim()) {
-        problems.push(`KO senza note: [${s.titolo}] ${it.testo}`);
-      }
-    }
-  }
+  const problems = RM.findKoWithoutNotes(model)
+    .map(({ section, item }) => `KO senza note: [${section.titolo}] ${item.testo}`);
   if (problems.length) {
     alert("Impossibile esportare:\n\n" + problems.slice(0, 10).join("\n") + (problems.length > 10 ? "\n..." : ""));
     return;
   }
 
-  model.app.lastSavedWith = APP_VERSION;
+  model = { ...model, app: { ...(model.app || {}), lastSavedWith: APP_VERSION } };
   touchAudit();
 
   const suggested = makeSuggestedFileName();
@@ -3322,16 +3440,12 @@ function makeSuggestedFileName() {
     return null;
   }
 
-  // Normalizzazione nome file:
-  // - spazi → _
-  // - niente caratteri strani
-  const safeNome = nome
-    .toUpperCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^A-Z0-9_]/g, "");
-
-  const stamp = formatDateTimeYYYYMMDDHHMM(new Date());
-  return `${safeNome}_${anno}_${stamp}.json`;
+  return RU.buildExportFileName({
+    centrale: nome,
+    anno,
+    date: new Date(),
+    extension: "json"
+  });
 }
 
 
@@ -3341,17 +3455,19 @@ function openJsonFile(file) {
   reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
-      const err = validateModel(parsed);
+      const err = RM.validateModel(parsed);
       if (err) {
         alert(err);
         return;
       }
-      const normalized = normalizeModel(parsed);
+      const normalized = RM.normalizeModel(parsed, {
+        maxPhotos: MAX_PHOTOS,
+        normalizePhoto: window.ReportImages?.normalizePhotoRecord
+      });
       const imageResult = await optimizeModelPhotos(normalized);
-      model = normalized;
+      model = imageResult.model;
       openedFileName = file?.name || "";
       enableUi(true);
-      bindAfterLoad();
       rerenderAll();
       if (imageResult.errors.length) {
         alert(
@@ -3387,12 +3503,12 @@ function createNewFile() {
     app: { schemaVersion: 2 },
     meta: {},
     sezioni: sections.map((titolo, i) => ({
-      id: makeUniqueId("sec", existing),
+      id: RU.makeUniqueId("sec", existing),
       titolo,
       order: (i + 1) * 10,
       items: [
         {
-          id: makeUniqueId("itm", existing),
+          id: RU.makeUniqueId("itm", existing),
           testo: "Ispezione e pulizia",
           order: 10,
           stato: "todo",
@@ -3407,10 +3523,12 @@ function createNewFile() {
     audit: {}
   };
 
-  model = normalizeModel(base);
+  model = RM.normalizeModel(base, {
+    maxPhotos: MAX_PHOTOS,
+    normalizePhoto: window.ReportImages?.normalizePhotoRecord
+  });
   openedFileName = "";
   enableUi(true);
-  bindAfterLoad();
   rerenderAll();
 }
 
@@ -3430,29 +3548,7 @@ function resetAllStates() {
   const ok = confirm("Confermi il reset completo?\n\n- Stati: tutti su \"Da fare\"\n- Note e dati generali: cancellati");
   if (!ok) return;
 
-  for (const s of model.sezioni || []) {
-    for (const it of s.items || []) {
-      it.stato = "todo";
-      it.note = "";
-      it.timestamp = "";
-      it.photos = [];
-      it.photoDataUrl = "";
-      it.photoName = "";
-    }
-  }
-
-  if (!model.meta) model.meta = {};
-  model.meta.centraleNome = "";
-  model.meta.anno = "";
-  model.meta.preposto = "";
-  model.meta.operatori = "";
-  model.meta.dataInizio = "";
-  model.meta.dataFine = "";
-  model.meta.oreFunzionamento = "";
-  model.meta.noteGenerali = "";
-
-  model.audit = {};
-
+  model = RM.resetReport(model);
   touchAudit();
   rerenderAll();
 }
@@ -3460,12 +3556,6 @@ function resetAllStates() {
 /* ========================================================================== */
 /* 16) INIT                                                                    */
 /* ========================================================================== */
-
-// Riserva il punto di collegamento per eventi da inizializzare dopo il caricamento.
-function bindAfterLoad() {
-  // campi meta (una sola volta)
-  // se già bindati, non crea problemi gravi, ma meglio evitare in futuro
-}
 
 // Collega gli eventi principali e prepara l'interfaccia all'avvio.
 function init() {
@@ -3485,8 +3575,8 @@ function init() {
 
   document.getElementById("btnSave").addEventListener("click", exportJson);
   document.getElementById("btnResetStates").addEventListener("click", resetAllStates);
-  document.getElementById("btnPdfBlank").addEventListener("click", () => generatePdf(true));
-  document.getElementById("btnPdfState").addEventListener("click", () => generatePdf(false));
+  document.getElementById("btnPdfBlank").addEventListener("click", () => generatePdf(model, true));
+  document.getElementById("btnPdfState").addEventListener("click", () => generatePdf(model, false));
 
   document.getElementById("btnExpandAll").addEventListener("click", () => expandCollapseAll(true));
   document.getElementById("btnCollapseAll").addEventListener("click", () => expandCollapseAll(false));

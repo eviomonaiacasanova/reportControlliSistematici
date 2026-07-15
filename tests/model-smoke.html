@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>Model smoke test</title>
+</head>
+<body>
+  <pre id="result">RUNNING</pre>
+  <script src="../js/utils.js"></script>
+  <script src="../js/model.js"></script>
+  <script>
+    (function runModelTests() {
+      "use strict";
+
+      const output = document.getElementById("result");
+      let assertions = 0;
+
+      function assert(condition, message) {
+        assertions++;
+        if (!condition) throw new Error(message);
+      }
+
+      function assertEqual(actual, expected, message) {
+        assert(actual === expected, `${message}: atteso ${expected}, ricevuto ${actual}`);
+      }
+
+      function deterministicIdFactory() {
+        let counter = 0;
+        return (prefix, usedIds) => {
+          let id;
+          do id = `${prefix}_test_${++counter}`;
+          while (usedIds.has(id));
+          usedIds.add(id);
+          return id;
+        };
+      }
+
+      try {
+        const original = {
+          app: { schemaVersion: 2 },
+          meta: { centraleNome: "Centrale A", anno: 2026 },
+          audit: {},
+          sezioni: [{
+            id: "sec_1",
+            titolo: "Sezione",
+            order: 10,
+            items: [{
+              id: "itm_1",
+              testo: "Controllo",
+              order: 10,
+              stato: "ko",
+              note: "Guasto",
+              timestamp: "15/07/2026",
+              photos: [{ dataUrl: "data:image/jpeg;base64,abc", name: "foto.jpg" }]
+            }]
+          }]
+        };
+
+        const checked = ReportModel.setSectionState(original, "sec_1", "ok", "16/07/2026");
+        assertEqual(checked.sezioni[0].items[0].stato, "ok", "Check di sezione");
+        assertEqual(original.sezioni[0].items[0].stato, "ko", "Il check non modifica l'originale");
+
+        const unchecked = ReportModel.setSectionState(checked, "sec_1", "todo", "16/07/2026");
+        assertEqual(unchecked.sezioni[0].items[0].stato, "todo", "Uncheck di sezione");
+
+        const cloned = ReportModel.cloneSectionEmpty(original.sezioni[0], {
+          id: "sec_2",
+          titolo: "Sezione copia",
+          itemIds: ["itm_2"]
+        });
+        assertEqual(cloned.titolo, "Sezione copia", "Titolo sezione clonata");
+        assertEqual(cloned.items[0].testo, "Controllo", "Testo controllo clonato");
+        assertEqual(cloned.items[0].stato, "todo", "Stato controllo clonato");
+        assertEqual(cloned.items[0].note, "", "Note controllo clonato");
+        assertEqual(cloned.items[0].timestamp, "", "Data controllo clonato");
+        assertEqual(cloned.items[0].photos.length, 0, "Foto controllo clonato");
+        assertEqual(original.sezioni[0].items[0].note, "Guasto", "La clonazione non modifica l'originale");
+
+        const legacy = {
+          meta: { dataInizio: "2026-07-15" },
+          audit: { lastModified: "2026-07-14" },
+          sezioni: [{
+            id: "duplicato",
+            titolo: "Legacy",
+            items: [
+              {
+                id: "duplicato",
+                testo: "Primo",
+                order: 5,
+                stato: "sconosciuto",
+                photoDataUrl: "data:image/jpeg;base64,abc",
+                photoName: "legacy.jpg"
+              },
+              { id: "duplicato", testo: "Secondo", order: 5 }
+            ]
+          }]
+        };
+        const normalized = ReportModel.normalizeModel(legacy, {
+          makeUniqueId: deterministicIdFactory()
+        });
+        const normalizedIds = ReportModel.collectAllIds(normalized);
+        assertEqual(normalizedIds.size, 3, "Identificativi normalizzati univoci");
+        assertEqual(normalized.meta.dataInizio, "15/07/2026", "Data meta normalizzata");
+        assertEqual(normalized.audit.lastModified, "14/07/2026", "Data audit normalizzata");
+        assertEqual(normalized.sezioni[0].items[0].stato, "todo", "Stato non valido normalizzato");
+        assertEqual(normalized.sezioni[0].items[0].photos.length, 1, "Foto legacy migrata");
+        assertEqual(normalized.sezioni[0].items[0].photoDataUrl, "", "Campo foto legacy svuotato");
+        assertEqual(normalized.sezioni[0].items[0].order, 10, "Primo ordine duplicato normalizzato");
+        assertEqual(normalized.sezioni[0].items[1].order, 20, "Secondo ordine duplicato normalizzato");
+        assertEqual(legacy.meta.dataInizio, "2026-07-15", "La normalizzazione non modifica l'originale");
+
+        const reset = ReportModel.resetReport(original);
+        assertEqual(reset.meta.centraleNome, "", "Reset centrale");
+        assertEqual(reset.sezioni[0].items[0].stato, "todo", "Reset stato");
+        assertEqual(reset.sezioni[0].items[0].photos.length, 0, "Reset foto");
+        assertEqual(original.meta.centraleNome, "Centrale A", "Il reset non modifica l'originale");
+
+        const fileName = ReportUtils.buildExportFileName({
+          centrale: "Centrale A",
+          anno: 2026,
+          label: "stato",
+          date: new Date(2026, 6, 15, 14, 30),
+          extension: "pdf"
+        });
+        assertEqual(fileName, "CENTRALE_A_2026_stato_20260715_1430.pdf", "Nome file esportato");
+
+        output.textContent = `PASS ${assertions} verifiche modello/export`;
+      } catch (error) {
+        output.textContent = `FAIL dopo ${assertions} verifiche: ${error.message}`;
+        document.title = "FAIL - Model smoke test";
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -49,9 +49,11 @@ foreach ($javascript in @(
   "libs/jspdf.umd.min.js",
   "libs/jspdf-autotable.min.js",
   "assets/logo.inline.js",
-  "image-utils.js",
-  "pdf.js",
-  "app.js"
+  "js/utils.js",
+  "js/model.js",
+  "js/image-utils.js",
+  "js/pdf.js",
+  "js/app.js"
 )) {
   $html = Inline-Js $html $javascript
 }

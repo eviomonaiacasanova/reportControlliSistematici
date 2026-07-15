@@ -2,56 +2,32 @@
 /* PDF UTILITIES - extracted from app.js                                       */
 /* ========================================================================== */
 
+(function initReportPdf(global) {
+"use strict";
 
 let logoDataUrl = undefined;    // cache logo per PDF
-
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-function formatDateDDMMYYYY(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  const day = pad2(d.getDate());
-  const month = pad2(d.getMonth() + 1);
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-function formatDateYYYYMMDD(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  const day = pad2(d.getDate());
-  const month = pad2(d.getMonth() + 1);
-  const year = d.getFullYear();
-  return `${year}${month}${day}`;
-}
-
-// Converte una data nel formato AAAAMMGG_HHMM usato nei nomi dei PDF.
-function formatDateTimeYYYYMMDDHHMM(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  return `${formatDateYYYYMMDD(d)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`;
-}
 /* 14) PDF                                                                     */
 /* ========================================================================== */
 
-async function generatePdf(isBlank) {
-  if (!model) return;
+async function generatePdf(reportModel, isBlank, generatedAt = new Date()) {
+  if (!reportModel) return;
 
-  if (!window.jspdf || !window.jspdf.jsPDF) {
+  if (!global.jspdf || !global.jspdf.jsPDF) {
     alert("jsPDF non caricato. Controlla libs/jspdf.umd.min.js e l’ordine degli script.");
     return;
   }
 
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = global.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
 
-  const centrale = model.meta.centraleNome || "";
-  const anno = model.meta.anno || "";
-  const preposto = model.meta.preposto || "";
-  const operatori = (model.meta.operatori || "").trim();
-  const dataInizio = model.meta.dataInizio || "";
-  const dataFine = model.meta.dataFine || "";
-  const oreFunzionamento = model.meta.oreFunzionamento ?? "";
-  const noteGenerali = String(model.meta.noteGenerali || "").trim();
+  const centrale = reportModel.meta.centraleNome || "";
+  const anno = reportModel.meta.anno || "";
+  const preposto = reportModel.meta.preposto || "";
+  const operatori = (reportModel.meta.operatori || "").trim();
+  const dataInizio = reportModel.meta.dataInizio || "";
+  const dataFine = reportModel.meta.dataFine || "";
+  const oreFunzionamento = reportModel.meta.oreFunzionamento ?? "";
+  const noteGenerali = String(reportModel.meta.noteGenerali || "").trim();
 
   // --- HEADER: prima scriviamo SEMPRE testo (così non esce mai vuoto) ---
   doc.setFontSize(14);
@@ -68,7 +44,7 @@ async function generatePdf(isBlank) {
   }
   doc.text(`Periodo: ${dataInizio}  ${dataFine ? "-> " + dataFine : ""}`, 14, 32);
 
-  const gp = getGlobalProgressForPdf();
+  const gp = getGlobalProgressForPdf(reportModel);
   const gpText = gp.total > 0
     ? `Completamento globale: ${gp.pct}% (${gp.done}/${gp.total}, NA: ${gp.na})`
     : "Completamento globale: 0% (nessun controllo)";
@@ -136,8 +112,8 @@ async function generatePdf(isBlank) {
 
   if (!isBlank) {
     const koItems = [];
-    for (const section of sortByOrder(model.sezioni)) {
-      for (const it of sortByOrder(section.items || [])) {
+    for (const section of global.ReportModel.sortByOrder(reportModel.sezioni)) {
+      for (const it of global.ReportModel.sortByOrder(section.items || [])) {
         if ((it.stato || "todo") !== "ko") continue;
         koItems.push({
           sezione: section.titolo || "",
@@ -199,8 +175,8 @@ async function generatePdf(isBlank) {
     }
   }
 
-  for (const section of sortByOrder(model.sezioni)) {
-    const items = sortByOrder(section.items || []);
+  for (const section of global.ReportModel.sortByOrder(reportModel.sezioni)) {
+    const items = global.ReportModel.sortByOrder(section.items || []);
     if (y > 270) { doc.addPage(); y = 20; }
 
     doc.setFontSize(12);
@@ -208,57 +184,63 @@ async function generatePdf(isBlank) {
     y += 4;
 
     if (canAutoTable) {
-      const rows = items.map(it => {
-        const st = isBlank ? "" : (it.stato || "todo");
-        const box = stateToBox(st);
-        const note = isBlank ? "" : (it.note || "");
-        return [box, it.testo, note];
+      const preparedRows = [];
+      for (const item of items) {
+        preparedRows.push({
+          item,
+          photos: isBlank ? [] : await prepareItemPhotos(item, 46, 32)
+        });
+      }
+
+      const rows = preparedRows.map(({ item, photos }) => {
+        const state = isBlank ? "" : (item.stato || "todo");
+        const baseCells = [stateToBox(state), item.testo, isBlank ? "" : (item.note || "")];
+        if (!isBlank) {
+          baseCells.push({
+            content: "",
+            styles: { minCellHeight: getPhotoCellHeight(photos) }
+          });
+        }
+        return baseCells;
       });
 
       doc.autoTable({
         startY: y,
-        head: [["", "Controllo", "Note"]],
+        head: [isBlank ? ["", "Controllo", "Note"] : ["", "Controllo", "Note", "Foto"]],
         body: rows,
         theme: "grid",
         styles: { fontSize: 9, cellPadding: 2, overflow: "linebreak" },
         headStyles: { fontSize: 9 },
-        columnStyles: {
-          0: { cellWidth: 10 },
-          1: { cellWidth: 110 },
-          2: { cellWidth: 60 }
+        columnStyles: isBlank
+          ? {
+              0: { cellWidth: 10 },
+              1: { cellWidth: 110 },
+              2: { cellWidth: 60 }
+            }
+          : {
+              0: { cellWidth: 10 },
+              1: { cellWidth: 75 },
+              2: { cellWidth: 45 },
+              3: { cellWidth: 50, cellPadding: 2, valign: "middle" }
+            },
+        rowPageBreak: "avoid",
+        didDrawCell: data => {
+          if (isBlank || data.section !== "body" || data.column.index !== 3) return;
+          drawPhotosInCell(doc, data.cell, preparedRows[data.row.index]?.photos || []);
         }
-
       });
 
       y = doc.lastAutoTable.finalY + 8;
-      if (!isBlank) {
-        for (const it of items) {
-          y = await appendItemPhoto(doc, it, y);
-        }
-      }
     } else {
-      doc.setFontSize(10);
-      for (const it of items) {
-        if (y > 280) { doc.addPage(); y = 20; }
-        const st = isBlank ? "" : (it.stato || "todo"); doc.text(`${stateToBox(st)} ${it.testo}`, 14, y);
-        y += 5;
-        if (!isBlank && it.note) {
-          doc.setFontSize(9);
-          doc.text(`Note: ${it.note}`, 18, y);
-          y += 5;
-          doc.setFontSize(10);
-        }
-        if (!isBlank) {
-          y = await appendItemPhoto(doc, it, y);
-        }
+      for (const item of items) {
+        y = await drawFallbackItemRow(doc, item, y, isBlank);
       }
       y += 6;
     }
   }
 
   const pageCount = doc.getNumberOfPages();
-  const generatedAt = new Date();
-  const gen = `${formatDateDDMMYYYY(generatedAt)} ${pad2(generatedAt.getHours())}:${pad2(generatedAt.getMinutes())}`;
+  const gen = `${global.ReportUtils.formatDateDDMMYYYY(generatedAt)} ${global.ReportUtils.pad2(generatedAt.getHours())}:${global.ReportUtils.pad2(generatedAt.getMinutes())}`;
 
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -269,14 +251,13 @@ async function generatePdf(isBlank) {
     doc.setTextColor(0);
   }
 
-  const safeNome = (centrale || "CENTRALE")
-    .toUpperCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^A-Z0-9_]/g, "");
-
-  const fileName = isBlank
-    ? `${safeNome}_${anno}_modulo_vuoto_${formatDateTimeYYYYMMDDHHMM(generatedAt)}.pdf`
-    : `${safeNome}_${anno}_stato_${formatDateTimeYYYYMMDDHHMM(generatedAt)}.pdf`;
+  const fileName = global.ReportUtils.buildExportFileName({
+    centrale: centrale || "CENTRALE",
+    anno,
+    label: isBlank ? "modulo_vuoto" : "stato",
+    date: generatedAt,
+    extension: "pdf"
+  });
 
   doc.save(fileName);
 }
@@ -290,63 +271,97 @@ function stateToBox(state) {
   return "[ ]";
 }
 
-async function appendItemPhoto(doc, item, y) {
-  const photos = Array.isArray(item.photos)
-    ? item.photos.filter(p => p && p.dataUrl)
+async function prepareItemPhotos(item, maxWidth, maxHeight) {
+  const sourcePhotos = Array.isArray(item.photos)
+    ? item.photos.filter(photo => photo && photo.dataUrl)
     : [];
-
-  if (!photos.length && item.photoDataUrl) {
-    photos.push({ dataUrl: item.photoDataUrl, name: item.photoName || "foto" });
+  if (!sourcePhotos.length && item.photoDataUrl) {
+    sourcePhotos.push({ dataUrl: item.photoDataUrl, name: item.photoName || "foto" });
   }
 
-  if (!photos.length) return y;
-
-  for (let i = 0; i < photos.length; i++) {
-    const p = photos[i];
-    let prepared = p;
-
+  const imageConfig = global.ReportImages?.CONFIG;
+  const effectiveMaxWidth = Math.min(maxWidth, imageConfig?.pdfMaxWidthMm || maxWidth);
+  const effectiveMaxHeight = Math.min(maxHeight, imageConfig?.pdfMaxHeightMm || maxHeight);
+  const result = [];
+  for (const source of sourcePhotos) {
+    let prepared = source;
     try {
-      if (window.ReportImages) {
-        prepared = await window.ReportImages.ensureOptimizedPhoto(p);
-      }
+      if (global.ReportImages) prepared = await global.ReportImages.ensureOptimizedPhoto(source);
     } catch (error) {
-      console.warn(`Foto non inserita (${p.name || "foto"}):`, error);
+      console.warn(`Foto non inserita (${source.name || "foto"}):`, error);
       continue;
     }
 
-    const type = getImageType(prepared.dataUrl);
-    const dims = prepared.width && prepared.height
-      ? { w: prepared.width, h: prepared.height }
+    const dimensions = prepared.width && prepared.height
+      ? { width: prepared.width, height: prepared.height }
       : await getImageDims(prepared.dataUrl);
-    if (!dims) continue;
+    if (!dimensions) continue;
+    const scale = Math.min(
+      effectiveMaxWidth / dimensions.width,
+      effectiveMaxHeight / dimensions.height,
+      1
+    );
+    result.push({
+      dataUrl: prepared.dataUrl,
+      type: getImageType(prepared.dataUrl),
+      width: dimensions.width * scale,
+      height: dimensions.height * scale
+    });
+  }
+  return result;
+}
 
-    const imageConfig = window.ReportImages?.CONFIG;
-    const maxW = imageConfig?.pdfMaxWidthMm || 180;
-    const maxH = imageConfig?.pdfMaxHeightMm || 60;
-    const scale = Math.min(maxW / dims.w, maxH / dims.h, 1);
-    const iw = dims.w * scale;
-    const ih = dims.h * scale;
+function getPhotoCellHeight(photos) {
+  if (!photos.length) return 8;
+  const imagesHeight = photos.reduce((total, photo) => total + photo.height, 0);
+  return imagesHeight + ((photos.length - 1) * 2) + 4;
+}
 
-    if (y + 4 + ih + 6 > 280) {
-      doc.addPage();
-      y = 20;
-    }
+function drawPhotosInCell(doc, cell, photos) {
+  if (!photos.length) return;
+  const contentHeight = photos.reduce((total, photo) => total + photo.height, 0)
+    + ((photos.length - 1) * 2);
+  let imageY = cell.y + Math.max(2, (cell.height - contentHeight) / 2);
 
-    doc.setFontSize(9);
-    const label = photos.length > 1 ? `Foto ${i + 1}: ${item.testo}` : `Foto: ${item.testo}`;
-    doc.text(label, 14, y);
-    y += 4;
-
+  for (const photo of photos) {
+    const imageX = cell.x + Math.max(2, (cell.width - photo.width) / 2);
     try {
-      doc.addImage(prepared.dataUrl, type, 14, y, iw, ih, undefined, "FAST");
-      y += ih + 6;
+      doc.addImage(photo.dataUrl, photo.type, imageX, imageY, photo.width, photo.height, undefined, "FAST");
     } catch (error) {
-      console.warn(`Foto non inserita (${p.name || "foto"}):`, error);
-      y += 2;
+      console.warn("Foto non inserita nella cella:", error);
     }
+    imageY += photo.height + 2;
+  }
+}
+
+async function drawFallbackItemRow(doc, item, y, isBlank) {
+  const photos = isBlank ? [] : await prepareItemPhotos(item, 48, 32);
+  const controlLines = doc.splitTextToSize(item.testo || "", isBlank ? 106 : 71);
+  const noteLines = doc.splitTextToSize(isBlank ? "" : (item.note || ""), isBlank ? 56 : 41);
+  const textHeight = Math.max(controlLines.length, noteLines.length, 1) * 4 + 4;
+  const rowHeight = Math.max(10, textHeight, getPhotoCellHeight(photos));
+
+  if (y + rowHeight > 280) {
+    doc.addPage();
+    y = 20;
   }
 
-  return y;
+  const stateRight = 24;
+  const controlRight = isBlank ? 134 : 99;
+  const noteRight = isBlank ? 196 : 144;
+  doc.rect(14, y, 182, rowHeight);
+  doc.line(stateRight, y, stateRight, y + rowHeight);
+  doc.line(controlRight, y, controlRight, y + rowHeight);
+  if (!isBlank) doc.line(noteRight, y, noteRight, y + rowHeight);
+
+  doc.setFontSize(9);
+  doc.text(stateToBox(isBlank ? "" : (item.stato || "todo")), 16, y + 5);
+  doc.text(controlLines, 26, y + 5);
+  doc.text(noteLines, controlRight + 2, y + 5);
+  if (!isBlank) {
+    drawPhotosInCell(doc, { x: noteRight, y, width: 52, height: rowHeight }, photos);
+  }
+  return y + rowHeight;
 }
 
 function getImageType(dataUrl) {
@@ -359,33 +374,14 @@ function getImageType(dataUrl) {
 function getImageDims(dataUrl) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
     img.onerror = () => resolve(null);
     img.src = dataUrl;
   });
 }
 
-function getGlobalProgressForPdf() {
-  if (typeof computeGlobalProgress === "function") {
-    return computeGlobalProgress();
-  }
-  if (!model || !Array.isArray(model.sezioni)) {
-    return { done: 0, total: 0, pct: 0, ok: 0, ko: 0, todo: 0, na: 0 };
-  }
-  let ok = 0, ko = 0, todo = 0, na = 0;
-  for (const s of model.sezioni) {
-    for (const it of (s.items || [])) {
-      const st = (it.stato || "todo");
-      if (st === "ok") ok++;
-      else if (st === "ko") ko++;
-      else if (st === "na") na++;
-      else todo++;
-    }
-  }
-  const total = ok + ko + todo;
-  const done = ok + ko;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  return { done, total, pct, ok, ko, todo, na };
+function getGlobalProgressForPdf(reportModel) {
+  return global.ReportModel.computeGlobalProgress(reportModel);
 }
 
 function loadLogoDataUrl() {
@@ -394,8 +390,8 @@ function loadLogoDataUrl() {
 
     // NOTE: se cambi logo.jpg, rigenera assets/logo.inline.js con:
     // ./scripts/update-logo-base64dataurl.sh
-    if (window.LOGO_DATA_URL) {
-      logoDataUrl = window.LOGO_DATA_URL;
+    if (global.LOGO_DATA_URL) {
+      logoDataUrl = global.LOGO_DATA_URL;
       return resolve(logoDataUrl);
     }
 
@@ -405,3 +401,6 @@ function loadLogoDataUrl() {
 }
 
 /* ========================================================================== */
+
+global.generatePdf = generatePdf;
+})(typeof window !== "undefined" ? window : globalThis);

@@ -35,6 +35,7 @@ Il layout è volutamente semplice e stampabile.
 - Le proporzioni originali vengono mantenute sia nell'anteprima sia nel PDF.
 - Il lato massimo è limitato a 1280 px e la qualità JPEG è 0,78.
 - Anche le foto presenti nei vecchi JSON vengono ottimizzate quando il file viene aperto.
-- Il PDF usa un riquadro massimo di 180 x 60 mm per ogni foto.
+- Nel PDF di stato ogni foto compare nella colonna `Foto` della riga del proprio controllo.
+- L'altezza della riga si adatta automaticamente fino a contenere tutte le foto del controllo.
 
-Tutti questi valori sono raccolti in `CONFIG` all'inizio di `image-utils.js`.
+Tutti questi valori sono raccolti in `CONFIG` all'inizio di `js/image-utils.js`.

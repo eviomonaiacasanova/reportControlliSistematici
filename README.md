@@ -40,13 +40,25 @@ Non richiede installazioni, server o connessione internet.
 
 ## Struttura del progetto
 
+I sorgenti sono separati per responsabilità:
+
+- `js/utils.js`: date, identificativi e nomi degli export.
+- `js/model.js`: trasformazioni pure del modello dati.
+- `js/image-utils.js`: conversione e ottimizzazione delle fotografie.
+- `js/pdf.js`: generazione del PDF a partire da un modello ricevuto esplicitamente.
+- `js/app.js`: interfaccia, eventi e coordinamento tra i moduli.
+- `tests/`: smoke test eseguibili direttamente nel browser.
+
 ```
 
 /
 ├─ index.html
-├─ app.js
-├─ image-utils.js
-├─ pdf.js
+├─ js/
+│  ├─ app.js
+│  ├─ image-utils.js
+│  ├─ model.js
+│  ├─ pdf.js
+│  └─ utils.js
 ├─ style.css
 ├─ README.md
 ├─ todo.md

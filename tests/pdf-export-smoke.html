@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>PDF export smoke test</title>
+</head>
+<body>
+  <pre id="result">RUNNING</pre>
+  <script src="../libs/jspdf.umd.min.js"></script>
+  <script src="../libs/jspdf-autotable.min.js"></script>
+  <script src="../js/utils.js"></script>
+  <script src="../js/model.js"></script>
+  <script src="../js/image-utils.js"></script>
+  <script src="../js/pdf.js"></script>
+  <script>
+    (async function runPdfExportTests() {
+      "use strict";
+      const output = document.getElementById("result");
+      const fixedDate = new Date(2026, 6, 15, 14, 30);
+      const canvas = document.createElement("canvas");
+      canvas.width = 40;
+      canvas.height = 20;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#cc3333";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const photoDataUrl = canvas.toDataURL("image/jpeg", 0.8);
+      const report = {
+        meta: {
+          centraleNome: "Centrale A",
+          anno: 2026,
+          preposto: "Mario Rossi",
+          operatori: "",
+          dataInizio: "15/07/2026",
+          dataFine: "",
+          oreFunzionamento: "",
+          noteGenerali: ""
+        },
+        sezioni: [{
+          id: "sec_1",
+          titolo: "Sezione",
+          order: 10,
+          items: [{
+            id: "itm_1",
+            testo: "Controllo",
+            order: 10,
+            stato: "todo",
+            note: "",
+            photos: [{
+              dataUrl: photoDataUrl,
+              name: "test.jpg",
+              width: 40,
+              height: 20,
+              format: "JPEG",
+              optimized: true
+            }]
+          }]
+        }]
+      };
+
+      const originalSave = window.jspdf.jsPDF.API.save;
+      const originalAddImage = window.jspdf.jsPDF.API.addImage;
+      const savedNames = [];
+      const imagePositions = [];
+      window.jspdf.jsPDF.API.save = function captureSave(fileName) {
+        savedNames.push(fileName);
+        return this;
+      };
+      window.jspdf.jsPDF.API.addImage = function captureImage(...args) {
+        imagePositions.push({ x: args[2], y: args[3], width: args[4], height: args[5] });
+        return originalAddImage.apply(this, args);
+      };
+
+      try {
+        await window.generatePdf(report, false, fixedDate);
+        await window.generatePdf(report, true, fixedDate);
+        if (savedNames[0] !== "CENTRALE_A_2026_stato_20260715_1430.pdf") {
+          throw new Error(`nome PDF stato errato: ${savedNames[0] || "mancante"}`);
+        }
+        if (savedNames[1] !== "CENTRALE_A_2026_modulo_vuoto_20260715_1430.pdf") {
+          throw new Error(`nome modulo vuoto errato: ${savedNames[1] || "mancante"}`);
+        }
+        if (!imagePositions.length || imagePositions[0].x < 140) {
+          throw new Error("foto non disegnata nella colonna della propria riga");
+        }
+        if (typeof window.model !== "undefined") throw new Error("pdf.js dipende ancora da un modello globale");
+        output.textContent = "PASS modello PDF esplicito, nomi export e foto nella riga";
+      } catch (error) {
+        output.textContent = `FAIL ${error.message}`;
+        document.title = "FAIL - PDF export smoke test";
+      } finally {
+        window.jspdf.jsPDF.API.save = originalSave;
+        window.jspdf.jsPDF.API.addImage = originalAddImage;
+      }
+    })();
+  </script>
+</body>
+</html>

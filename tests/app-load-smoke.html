@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>App load smoke test</title>
+</head>
+<body>
+  <pre id="result">RUNNING</pre>
+  <span id="appVersion"></span>
+  <div id="subtitle"></div>
+  <input id="fileInput" type="file" />
+  <button id="btnNew"></button>
+  <button id="btnOpen"></button>
+  <button id="btnSave"></button>
+  <button id="btnResetStates"></button>
+  <button id="btnPdfBlank"></button>
+  <button id="btnPdfState"></button>
+  <button id="btnExpandAll"></button>
+  <button id="btnCollapseAll"></button>
+  <button id="btnToggleCompleted"></button>
+  <button id="btnAddSection"></button>
+  <input id="metaCentraleNome" />
+  <input id="metaAnno" />
+  <input id="metaPreposto" />
+  <input id="metaOperatori" />
+  <input id="metaDataInizio" />
+  <input id="metaDataFine" />
+  <input id="metaOreFunzionamento" />
+  <textarea id="metaNoteGenerali"></textarea>
+
+  <script src="../js/utils.js"></script>
+  <script src="../js/model.js"></script>
+  <script src="../js/image-utils.js"></script>
+  <script src="../js/pdf.js"></script>
+  <script src="../js/app.js"></script>
+  <script>
+    (function verifyAppLoad() {
+      const result = document.getElementById("result");
+      try {
+        const version = document.getElementById("appVersion").textContent;
+        const saveButton = document.getElementById("btnSave");
+        if (!/^v\d+\.\d+\.\d+$/.test(version)) throw new Error(`versione non inizializzata: ${version || "vuota"}`);
+        if (!saveButton.disabled) throw new Error("interfaccia iniziale non disabilitata");
+        if (!window.ReportUtils || !window.ReportModel || !window.ReportImages || !window.generatePdf) {
+          throw new Error("uno o più moduli non sono disponibili");
+        }
+        result.textContent = "PASS caricamento moduli e inizializzazione UI";
+      } catch (error) {
+        result.textContent = `FAIL ${error.message}`;
+        document.title = "FAIL - App load smoke test";
+      }
+    })();
+  </script>
+</body>
+</html>
