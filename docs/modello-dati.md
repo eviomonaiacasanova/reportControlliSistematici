@@ -4,7 +4,7 @@ Ogni file JSON rappresenta:
 - una centrale
 - un anno di controlli
 
-Esempio nome file: CentraleA_2026.json
+Esempio nome file esportato: `CENTRALEA_2026_20260715_1430.json` (`AAAAMMGG_HHMM`).
 
 
 ---

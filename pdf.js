@@ -24,6 +24,12 @@ function formatDateYYYYMMDD(d) {
   const year = d.getFullYear();
   return `${year}${month}${day}`;
 }
+
+// Converte una data nel formato AAAAMMGG_HHMM usato nei nomi dei PDF.
+function formatDateTimeYYYYMMDDHHMM(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+  return `${formatDateYYYYMMDD(d)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+}
 /* 14) PDF                                                                     */
 /* ========================================================================== */
 
@@ -251,7 +257,8 @@ async function generatePdf(isBlank) {
   }
 
   const pageCount = doc.getNumberOfPages();
-  const gen = formatDateDDMMYYYY(new Date());
+  const generatedAt = new Date();
+  const gen = `${formatDateDDMMYYYY(generatedAt)} ${pad2(generatedAt.getHours())}:${pad2(generatedAt.getMinutes())}`;
 
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -268,8 +275,8 @@ async function generatePdf(isBlank) {
     .replace(/[^A-Z0-9_]/g, "");
 
   const fileName = isBlank
-    ? `${safeNome}_${anno}_modulo_vuoto_${formatDateYYYYMMDD(new Date())}.pdf`
-    : `${safeNome}_${anno}_stato_${formatDateYYYYMMDD(new Date())}.pdf`;
+    ? `${safeNome}_${anno}_modulo_vuoto_${formatDateTimeYYYYMMDDHHMM(generatedAt)}.pdf`
+    : `${safeNome}_${anno}_stato_${formatDateTimeYYYYMMDDHHMM(generatedAt)}.pdf`;
 
   doc.save(fileName);
 }

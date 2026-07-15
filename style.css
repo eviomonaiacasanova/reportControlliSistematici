@@ -589,6 +589,20 @@ body {
   justify-content: space-between;
 }
 
+.section-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.section-check-all {
+  border-color: rgba(89, 217, 142, 0.55);
+}
+
+.section-uncheck-all {
+  border-color: rgba(255, 209, 102, 0.55);
+}
+
 .small-muted {
   color: var(--muted);
   font-size: 12px;

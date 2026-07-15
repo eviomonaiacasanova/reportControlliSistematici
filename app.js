@@ -18,12 +18,14 @@ let model = null;          // JSON in memoria
 let openedFileName = "";   // per suggerire il nome in export
 let showCompleted = true;  // mostra/nasconde controlli non "todo"
 const MAX_PHOTOS = 3;
+const APP_VERSION = "1.3.1"; // versione del programma, gestita in un solo punto
 
 
 /* ========================================================================== */
 /* 02) DATE & IDS                                                              */
 /* ========================================================================== */
 
+// Raccoglie tutti gli identificativi di sezioni e controlli presenti nel modello.
 function collectAllIds(m) {
   const set = new Set();
   for (const s of m.sezioni || []) {
@@ -33,6 +35,7 @@ function collectAllIds(m) {
   return set;
 }
 
+// Genera un identificativo basato su data, ora e una componente casuale.
 function makeId(prefix) {
   const d = new Date();
   const y = d.getFullYear();
@@ -45,6 +48,7 @@ function makeId(prefix) {
   return `${prefix}_${y}${m}${day}_${hh}${mm}${ss}_${rnd}`;
 }
 
+// Genera un identificativo che non sia già presente nell'insieme ricevuto.
 function makeUniqueId(prefix, existingSet) {
   let id = makeId(prefix);
   while (existingSet.has(id)) id = makeId(prefix);
@@ -52,6 +56,7 @@ function makeUniqueId(prefix, existingSet) {
   return id;
 }
 
+// Converte una data nel formato leggibile GG/MM/AAAA.
 function formatDateDDMMYYYY(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
   const day = pad2(d.getDate());
@@ -60,6 +65,7 @@ function formatDateDDMMYYYY(d) {
   return `${day}/${month}/${year}`;
 }
 
+// Converte una data nel formato compatto AAAAMMGG usato nei nomi dei file.
 function formatDateYYYYMMDD(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
   const day = pad2(d.getDate());
@@ -68,18 +74,27 @@ function formatDateYYYYMMDD(d) {
   return `${year}${month}${day}`;
 }
 
+// Converte una data nel formato AAAAMMGG_HHMM usato per distinguere gli export.
+function formatDateTimeYYYYMMDDHHMM(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+  return `${formatDateYYYYMMDD(d)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+}
+
+// Converte una data ISO AAAA-MM-GG nel formato GG/MM/AAAA.
 function formatYmdToDmy(ymd) {
   const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return "";
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+// Converte una data GG/MM/AAAA nel formato ISO AAAA-MM-GG.
 function formatDmyToYmd(dmy) {
   const m = String(dmy || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return "";
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
+// Normalizza i diversi formati di data accettati nel formato GG/MM/AAAA.
 function normalizeDateString(value) {
   const str = String(value ?? "").trim();
   if (!str) return "";
@@ -90,6 +105,7 @@ function normalizeDateString(value) {
   return str;
 }
 
+// Svuota i campi foto legacy dopo la migrazione all'array photos.
 function syncLegacyPhotoFields(it) {
   // I campi legacy duplicavano per intero la prima foto nel JSON.
   // Vengono ancora letti in normalizeModel, ma non sono piu salvati.
@@ -97,6 +113,7 @@ function syncLegacyPhotoFields(it) {
   it.photoName = "";
 }
 
+// Uniforma la struttura di una foto anche quando il modulo immagini non è disponibile.
 function normalizePhotoRecord(photo) {
   if (window.ReportImages) return window.ReportImages.normalizePhotoRecord(photo);
   return {
@@ -105,6 +122,7 @@ function normalizePhotoRecord(photo) {
   };
 }
 
+// Ottimizza tutte le foto del modello e restituisce eventuali errori incontrati.
 async function optimizeModelPhotos(targetModel) {
   if (!window.ReportImages) return { optimized: 0, errors: [] };
 
@@ -132,20 +150,24 @@ async function optimizeModelPhotos(targetModel) {
   return { optimized, errors };
 }
 
+// Converte il valore di un campo data HTML nel formato usato dal modello.
 function inputValueToDmy(value) {
   if (!value) return "";
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
   return formatYmdToDmy(value);
 }
 
+// Restituisce la data corrente nel formato GG/MM/AAAA.
 function nowDmy() {
   return formatDateDDMMYYYY(new Date());
 }
 
+// Aggiunge uno zero iniziale ai numeri composti da una sola cifra.
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
+// Restituisce una copia dell'array ordinata in base al campo order.
 function sortByOrder(arr) {
   return [...arr].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
@@ -154,6 +176,7 @@ function sortByOrder(arr) {
 /* 03) UI ENABLE / SUBTITLE                                                    */
 /* ========================================================================== */
 
+// Abilita o disabilita i comandi che richiedono un modello caricato.
 function enableUi(enabled) {
   const ids = [
     "btnSave", "btnResetStates", "btnPdfBlank", "btnPdfState",
@@ -171,6 +194,7 @@ function enableUi(enabled) {
   }
 }
 
+// Aggiorna il sottotitolo con centrale, anno e nome del file corrente.
 function updateSubtitle() {
   const sub = document.getElementById("subtitle");
   const nome = model.meta.centraleNome || "(centrale non impostata)";
@@ -178,6 +202,7 @@ function updateSubtitle() {
   sub.textContent = `${nome} | ${anno} | File: ${openedFileName || "non salvato"}`;
 }
 
+// Mostra il messaggio iniziale quando nessun file è stato caricato.
 function setSubtitleEmpty() {
   const sub = document.getElementById("subtitle");
   if (sub) sub.textContent = "Apri un file JSON per iniziare.";
@@ -187,6 +212,7 @@ function setSubtitleEmpty() {
 /* 04) MODEL VALIDATION / NORMALIZATION                                        */
 /* ========================================================================== */
 
+// Completa e normalizza il modello importato per renderlo compatibile con l'app.
 function normalizeModel(m) {
   // Normalizzazione minima per evitare undefined e per garantire funzioni UI (riordino, ecc.)
   m.app = m.app || { schemaVersion: 1 };
@@ -266,6 +292,7 @@ function normalizeModel(m) {
   return m;
 }
 
+// Verifica che il JSON contenga la struttura minima richiesta dall'app.
 function validateModel(m) {
   if (!m || typeof m !== "object") return "JSON non valido.";
   if (!m.meta || !m.sezioni) return "Mancano meta o sezioni.";
@@ -277,6 +304,7 @@ function validateModel(m) {
 /* 05) AUDIT                                                                   */
 /* ========================================================================== */
 
+// Aggiorna i dati di audit dopo una modifica al modello.
 function touchAudit() {
   if (!model.audit) model.audit = {};
   model.audit.lastModified = nowDmy();
@@ -287,6 +315,7 @@ function touchAudit() {
 /* 06) META BINDING                                                            */
 /* ========================================================================== */
 
+// Collega i campi dei dati generali alle rispettive proprietà del modello.
 function bindMeta() {
   const fields = [
     ["metaCentraleNome", "centraleNome"],
@@ -318,6 +347,7 @@ function bindMeta() {
 }
 
 
+// Riporta nei campi dell'interfaccia i dati generali presenti nel modello.
 function renderMeta() {
   document.getElementById("metaCentraleNome").value = model.meta.centraleNome ?? "";
   document.getElementById("metaAnno").value = model.meta.anno ?? "";
@@ -329,6 +359,7 @@ function renderMeta() {
   document.getElementById("metaNoteGenerali").value = model.meta.noteGenerali ?? "";
 }
 
+// Svuota tutti i campi dei dati generali mostrati nell'interfaccia.
 function clearMetaInputs() {
   document.getElementById("metaCentraleNome").value = "";
   document.getElementById("metaAnno").value = "";
@@ -344,6 +375,7 @@ function clearMetaInputs() {
 /* 07) SECTION STATS / PROGRESS                                                */
 /* ========================================================================== */
 
+// Conta i controlli della sezione raggruppandoli per stato.
 function computeSectionBadges(section) {
   const counts = { todo: 0, ok: 0, ko: 0, na: 0 };
   for (const it of section.items || []) {
@@ -354,6 +386,7 @@ function computeSectionBadges(section) {
   return counts;
 }
 
+// Calcola quanti controlli della sezione sono completati e la loro percentuale.
 function computeSectionProgress(section) {
   const total = (section.items || []).length;
   if (total === 0) return { total: 0, done: 0, pct: 0 };
@@ -367,6 +400,7 @@ function computeSectionProgress(section) {
   return { total, done, pct };
 }
 
+// Crea un badge visivo per mostrare il conteggio di uno stato.
 function makeBadge(kind, text) {
   const span = document.createElement("span");
   span.className = `badge ${kind}`;
@@ -374,6 +408,7 @@ function makeBadge(kind, text) {
   return span;
 }
 
+// Crea la barra di avanzamento di una sezione.
 function makeProgressNode(pct) {
   const wrap = document.createElement("div");
   wrap.className = "progress";
@@ -385,6 +420,7 @@ function makeProgressNode(pct) {
   return wrap;
 }
 
+// Calcola lo stato di avanzamento complessivo di tutte le sezioni.
 function computeGlobalProgress() {
   if (!model || !Array.isArray(model.sezioni)) {
     return { done: 0, total: 0, pct: 0, ok: 0, ko: 0, todo: 0, na: 0 };
@@ -410,6 +446,7 @@ function computeGlobalProgress() {
   return { done, total, pct, ok, ko, todo, na };
 }
 
+// Aggiorna la barra e i conteggi dell'avanzamento globale.
 function renderGlobalProgress() {
   const fill = document.getElementById("globalProgressFill");
   const txt = document.getElementById("globalProgressText");
@@ -430,12 +467,14 @@ function renderGlobalProgress() {
 /* 08) FINDERS                                                                 */
 /* ========================================================================== */
 
+// Cerca un controllo tramite gli identificativi della sezione e del controllo.
 function findItem(sectionId, itemId) {
   const s = findSection(sectionId);
   if (!s) return null;
   return (s.items || []).find(it => it.id === itemId);
 }
 
+// Cerca una sezione tramite il suo identificativo.
 function findSection(sectionId) {
   return model.sezioni.find(s => s.id === sectionId);
 }
@@ -444,12 +483,14 @@ function findSection(sectionId) {
 /* 09) RENDER CORE                                                             */
 /* ========================================================================== */
 
+// Restituisce gli identificativi delle sezioni attualmente aperte.
 function getOpenSectionIds() {
   return Array.from(document.querySelectorAll("details.section"))
     .filter(d => d.open)
     .map(d => d.dataset.sectionId);
 }
 
+// Crea un pulsante per impostare lo stato di un controllo.
 function makeStateButton(kind, label, isActive, onClick) {
   const b = document.createElement("button");
   b.className = `state-btn kind-${kind}` + (isActive ? " active" : "");
@@ -458,11 +499,13 @@ function makeStateButton(kind, label, isActive, onClick) {
   return b;
 }
 
+// Apre nell'interfaccia la sezione indicata.
 function openSection(sectionId) {
   const el = document.querySelector(`details.section[data-section-id="${sectionId}"]`);
   if (el) el.open = true;
 }
 
+// Costruisce l'interfaccia completa di un singolo controllo.
 function renderItem(sectionId, itemId) {
   const item = findItem(sectionId, itemId);
 
@@ -710,17 +753,20 @@ function renderItem(sectionId, itemId) {
   return wrap;
 }
 
+// Stabilisce se il controllo deve essere visibile con il filtro corrente.
 function shouldRenderItem(item) {
   if (showCompleted) return true;
   return (item.stato || "todo") === "todo";
 }
 
+// Aggiorna l'etichetta del pulsante che mostra o nasconde i completati.
 function updateToggleCompletedLabel() {
   const btn = document.getElementById("btnToggleCompleted");
   if (!btn) return;
   btn.textContent = showCompleted ? "Nascondi completati" : "Mostra completati";
 }
 
+// Disegna tutte le sezioni conservando quelle che erano già aperte.
 function renderSections(openSet = new Set()) {
   const container = document.getElementById("sections");
   container.innerHTML = "";
@@ -857,6 +903,7 @@ function renderSections(openSet = new Set()) {
 
     const addBtn = document.createElement("button");
     addBtn.className = "btn btn-small";
+    addBtn.type = "button";
     addBtn.textContent = "+ Aggiungi controllo";
     addBtn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -865,11 +912,41 @@ function renderSections(openSet = new Set()) {
       openSection(section.id);
     });
 
+    const checkAllBtn = document.createElement("button");
+    checkAllBtn.className = "btn btn-small section-check-all";
+    checkAllBtn.type = "button";
+    checkAllBtn.textContent = "✓ Check tutti";
+    checkAllBtn.title = "Imposta tutti i controlli della sezione su OK";
+    checkAllBtn.disabled = !(section.items || []).length;
+    checkAllBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setSectionState(section.id, "ok");
+    });
+
+    const uncheckAllBtn = document.createElement("button");
+    uncheckAllBtn.className = "btn btn-small section-uncheck-all";
+    uncheckAllBtn.type = "button";
+    uncheckAllBtn.textContent = "○ Uncheck tutti";
+    uncheckAllBtn.title = "Riporta tutti i controlli della sezione su Da fare";
+    uncheckAllBtn.disabled = !(section.items || []).length;
+    uncheckAllBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setSectionState(section.id, "todo");
+    });
+
+    const actionButtons = document.createElement("div");
+    actionButtons.className = "section-action-buttons";
+    actionButtons.appendChild(addBtn);
+    actionButtons.appendChild(checkAllBtn);
+    actionButtons.appendChild(uncheckAllBtn);
+
     const small = document.createElement("div");
     small.className = "small-muted";
     small.textContent = "KO richiede note obbligatorie.";
 
-    rowActions.appendChild(addBtn);
+    rowActions.appendChild(actionButtons);
     rowActions.appendChild(small);
     body.appendChild(rowActions);
 
@@ -886,6 +963,7 @@ function renderSections(openSet = new Set()) {
   }
 }
 
+// Ridisegna l'intera interfaccia mantenendo lo stato di apertura delle sezioni.
 function rerenderAll() {
   // salva quali sezioni sono aperte (prima che la UI venga ricreata)
   const openIds = getOpenSectionIds();
@@ -902,6 +980,7 @@ function rerenderAll() {
 /* 10) ADD / EDIT ITEMS & SECTIONS                                             */
 /* ========================================================================== */
 
+// Aggiunge un nuovo controllo vuoto alla sezione indicata.
 function addControl(sectionId) {
   const section = findSection(sectionId);
   if (!section) return;
@@ -930,6 +1009,7 @@ function addControl(sectionId) {
   openSection(sectionId);
 }
 
+// Aggiunge una nuova sezione vuota al modello.
 function addSection() {
   const titolo = prompt("Titolo nuova sezione:");
   if (!titolo || !titolo.trim()) return;
@@ -950,6 +1030,7 @@ function addSection() {
   openSection(newId);
 }
 
+// Verifica se un controllo può essere spostato nella direzione richiesta.
 function canMove(sectionId, itemId, direction) {
   const s = findSection(sectionId);
   if (!s || !Array.isArray(s.items)) return false;
@@ -962,6 +1043,7 @@ function canMove(sectionId, itemId, direction) {
   return idx < itemsSorted.length - 1;
 }
 
+// Elimina un controllo dopo aver chiesto conferma all'utente.
 function deleteItem(sectionId, itemId) {
   const s = findSection(sectionId);
   if (!s || !Array.isArray(s.items)) return;
@@ -978,6 +1060,7 @@ function deleteItem(sectionId, itemId) {
   rerenderAll();
 }
 
+// Sposta un controllo scambiandone l'ordine con quello adiacente.
 function moveItem(sectionId, itemId, direction) {
   const s = findSection(sectionId);
   if (!s || !Array.isArray(s.items)) return;
@@ -1002,6 +1085,7 @@ function moveItem(sectionId, itemId, direction) {
   rerenderAll();
 }
 
+// Modifica il testo descrittivo di un controllo.
 function renameItem(sectionId, itemId) {
   const it = findItem(sectionId, itemId);
   if (!it) return;
@@ -1017,6 +1101,7 @@ function renameItem(sectionId, itemId) {
   rerenderAll();
 }
 
+// Riassegna valori di ordinamento regolari a sezioni e controlli.
 function normalizeSectionAndItemOrders() {
   const sectionsSorted = sortByOrder(model.sezioni);
   let secOrder = 10;
@@ -1033,6 +1118,7 @@ function normalizeSectionAndItemOrders() {
   }
 }
 
+// Duplica un controllo all'interno della stessa sezione.
 function cloneItem(sectionId, itemId) {
   const original = findItem(sectionId, itemId);
   if (!original) return;
@@ -1067,6 +1153,7 @@ function cloneItem(sectionId, itemId) {
   openSection(sectionId);
 }
 
+// Duplica la struttura di una sezione azzerando i dati compilati dei controlli.
 function cloneSection(sectionId) {
   const original = findSection(sectionId);
   if (!original) return;
@@ -1084,12 +1171,12 @@ function cloneSection(sectionId) {
       ...item,
       id: itemId,
       order: item.order ?? 0,
-      photos: Array.isArray(item.photos)
-        ? item.photos.map(normalizePhotoRecord)
-        : [],
+      stato: "todo",
+      note: "",
+      photos: [],
       photoDataUrl: "",
       photoName: "",
-      timestamp: nowDmy()
+      timestamp: ""
     };
   });
 
@@ -1111,6 +1198,7 @@ function cloneSection(sectionId) {
 /* 11) SECTION ACTIONS                                                         */
 /* ========================================================================== */
 
+// Verifica se una sezione può essere spostata nella direzione richiesta.
 function canMoveSection(sectionId, direction) {
   const sectionsSorted = sortByOrder(model.sezioni);
   const idx = sectionsSorted.findIndex(x => x.id === sectionId);
@@ -1119,6 +1207,7 @@ function canMoveSection(sectionId, direction) {
   return idx < sectionsSorted.length - 1;
 }
 
+// Elimina una sezione e tutti i suoi controlli dopo una doppia conferma.
 function deleteSectionDangerous(sectionId) {
   const s = findSection(sectionId);
   if (!s) return;
@@ -1144,6 +1233,7 @@ function deleteSectionDangerous(sectionId) {
   rerenderAll();
 }
 
+// Sposta una sezione scambiandone l'ordine con quella adiacente.
 function moveSection(sectionId, direction) {
   const sectionsSorted = sortByOrder(model.sezioni);
   const idx = sectionsSorted.findIndex(x => x.id === sectionId);
@@ -1164,6 +1254,7 @@ function moveSection(sectionId, direction) {
   rerenderAll();
 }
 
+// Modifica il titolo di una sezione.
 function renameSection(sectionId) {
   const s = findSection(sectionId);
   if (!s) return;
@@ -1182,6 +1273,23 @@ function renameSection(sectionId) {
 /* 12) STATE LOGIC                                                             */
 /* ========================================================================== */
 
+// Applica lo stesso stato a tutti i controlli di una sezione.
+function setSectionState(sectionId, state) {
+  const section = findSection(sectionId);
+  if (!section) return;
+
+  const timestamp = nowDmy();
+  for (const item of section.items || []) {
+    item.stato = state;
+    item.timestamp = timestamp;
+  }
+
+  touchAudit();
+  rerenderAll();
+  openSection(sectionId);
+}
+
+// Imposta lo stato di un controllo e gestisce l'obbligo delle note per i KO.
 function setState(sectionId, itemId, state) {
   const it = findItem(sectionId, itemId);
   if (!it) return;
@@ -1210,6 +1318,7 @@ function setState(sectionId, itemId, state) {
 /* 13) IMPORT / EXPORT                                                         */
 /* ========================================================================== */
 
+// Avvia nel browser il download di un contenuto testuale.
 function downloadTextFile(content, fileName, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -1222,6 +1331,7 @@ function downloadTextFile(content, fileName, mimeType) {
   URL.revokeObjectURL(url);
 }
 
+// Valida e scarica il modello corrente come file JSON.
 function exportJson() {
   if (!model) return;
 
@@ -1239,7 +1349,7 @@ function exportJson() {
     return;
   }
 
-  model.app.lastSavedWith = "1.3.0";
+  model.app.lastSavedWith = APP_VERSION;
   touchAudit();
 
   const suggested = makeSuggestedFileName();
@@ -1252,6 +1362,7 @@ function exportJson() {
   );
 }
 
+// Costruisce il nome del file JSON usando centrale, anno, data e ora.
 function makeSuggestedFileName() {
   const nome = (model.meta.centraleNome || "").trim();
   const anno = String(model.meta.anno || "").trim();
@@ -1269,11 +1380,12 @@ function makeSuggestedFileName() {
     .replace(/\s+/g, "_")
     .replace(/[^A-Z0-9_]/g, "");
 
-  const stamp = formatDateYYYYMMDD(new Date());
+  const stamp = formatDateTimeYYYYMMDDHHMM(new Date());
   return `${safeNome}_${anno}_${stamp}.json`;
 }
 
 
+// Legge, valida e carica nell'app un file JSON selezionato dall'utente.
 function openJsonFile(file) {
   const reader = new FileReader();
   reader.onload = async () => {
@@ -1305,6 +1417,7 @@ function openJsonFile(file) {
   reader.readAsText(file);
 }
 
+// Crea un nuovo modello con le sezioni iniziali predefinite.
 function createNewFile() {
   if (model) {
     const ok = confirm("Creare un nuovo file? Le modifiche non salvate andranno perse.");
@@ -1355,10 +1468,12 @@ function createNewFile() {
 /* 15) EXPAND / COLLAPSE                                                       */
 /* ========================================================================== */
 
+// Espande o comprime contemporaneamente tutte le sezioni.
 function expandCollapseAll(open) {
   document.querySelectorAll("details.section").forEach(d => d.open = open);
 }
 
+// Azzera stati, dati generali, note e foto dopo la conferma dell'utente.
 function resetAllStates() {
   if (!model) return;
 
@@ -1396,13 +1511,18 @@ function resetAllStates() {
 /* 16) INIT                                                                    */
 /* ========================================================================== */
 
+// Riserva il punto di collegamento per eventi da inizializzare dopo il caricamento.
 function bindAfterLoad() {
   // campi meta (una sola volta)
   // se già bindati, non crea problemi gravi, ma meglio evitare in futuro
 }
 
+// Collega gli eventi principali e prepara l'interfaccia all'avvio.
 function init() {
   enableUi(false);
+
+  const versionLabel = document.getElementById("appVersion");
+  if (versionLabel) versionLabel.textContent = `v${APP_VERSION}`;
 
   const fileInput = document.getElementById("fileInput");
   document.getElementById("btnNew").addEventListener("click", createNewFile);
