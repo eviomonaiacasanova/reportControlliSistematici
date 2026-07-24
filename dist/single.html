@@ -756,6 +756,50 @@ body {
   }
 }
 
+@media (max-width: 600px) {
+  .section summary {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .section-title-text {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .section-tools {
+    flex-wrap: wrap;
+  }
+
+  .summary-right {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .summary-right .progress {
+    width: 100%;
+  }
+
+  .badges {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .badge {
+    text-align: center;
+    white-space: nowrap;
+  }
+}
+
 </style>
 </head>
 
@@ -2137,6 +2181,7 @@ async function generatePdf(reportModel, isBlank, generatedAt = new Date()) {
   const dataFine = reportModel.meta.dataFine || "";
   const oreFunzionamento = reportModel.meta.oreFunzionamento ?? "";
   const noteGenerali = String(reportModel.meta.noteGenerali || "").trim();
+  const urlSitoPrincipale = String("https://eviomonaiacasanova.github.io/reportControlliSistematici/");
 
   // --- HEADER: prima scriviamo SEMPRE testo (così non esce mai vuoto) ---
   doc.setFontSize(14);
@@ -2356,6 +2401,7 @@ async function generatePdf(reportModel, isBlank, generatedAt = new Date()) {
     doc.setFontSize(9);
     doc.setTextColor(120);
     doc.text(`Generato: ${gen}`, 14, 290);
+    doc.text('Link Generatore Report: ' + urlSitoPrincipale, 14, 295);
     doc.text(`Pagina ${i}/${pageCount}`, 180, 290);
     doc.setTextColor(0);
   }
@@ -2518,7 +2564,6 @@ global.generatePdf = generatePdf;
   <script>
 /* ==========================================================================
    CONTROLLI SISTEMATICI - app.js
-   Offline, file-based, zero framework.
 
    Funzioni principali:
    - Import JSON / Export JSON
@@ -2536,7 +2581,7 @@ let model = null;          // JSON in memoria
 let openedFileName = "";   // per suggerire il nome in export
 let showCompleted = true;  // mostra/nasconde controlli non "todo"
 const MAX_PHOTOS = 3;
-const APP_VERSION = "1.3.1"; // versione del programma, gestita in un solo punto
+const APP_VERSION = "1.4.1"; // versione del programma
 const RM = window.ReportModel;
 const RU = window.ReportUtils;
 

@@ -746,3 +746,47 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 600px) {
+  .section summary {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .section-title-text {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .section-tools {
+    flex-wrap: wrap;
+  }
+
+  .summary-right {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .summary-right .progress {
+    width: 100%;
+  }
+
+  .badges {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .badge {
+    text-align: center;
+    white-space: nowrap;
+  }
+}

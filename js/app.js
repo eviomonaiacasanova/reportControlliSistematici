@@ -1,6 +1,5 @@
 /* ==========================================================================
    CONTROLLI SISTEMATICI - app.js
-   Offline, file-based, zero framework.
 
    Funzioni principali:
    - Import JSON / Export JSON
@@ -18,7 +17,7 @@ let model = null;          // JSON in memoria
 let openedFileName = "";   // per suggerire il nome in export
 let showCompleted = true;  // mostra/nasconde controlli non "todo"
 const MAX_PHOTOS = 3;
-const APP_VERSION = "1.4.0"; // versione del programma, gestita in un solo punto
+const APP_VERSION = "1.4.1"; // versione del programma
 const RM = window.ReportModel;
 const RU = window.ReportUtils;
 

@@ -28,6 +28,7 @@ async function generatePdf(reportModel, isBlank, generatedAt = new Date()) {
   const dataFine = reportModel.meta.dataFine || "";
   const oreFunzionamento = reportModel.meta.oreFunzionamento ?? "";
   const noteGenerali = String(reportModel.meta.noteGenerali || "").trim();
+  const urlSitoPrincipale = String("https://eviomonaiacasanova.github.io/reportControlliSistematici/");
 
   // --- HEADER: prima scriviamo SEMPRE testo (così non esce mai vuoto) ---
   doc.setFontSize(14);
@@ -247,6 +248,7 @@ async function generatePdf(reportModel, isBlank, generatedAt = new Date()) {
     doc.setFontSize(9);
     doc.setTextColor(120);
     doc.text(`Generato: ${gen}`, 14, 290);
+    doc.text('Link Generatore Report: ' + urlSitoPrincipale, 14, 295);
     doc.text(`Pagina ${i}/${pageCount}`, 180, 290);
     doc.setTextColor(0);
   }
